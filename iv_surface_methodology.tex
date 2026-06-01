@@ -1,0 +1,737 @@
+\documentclass[12pt, a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage[backend=biber, style=authoryear]{biblatex}
+
+\addbibresource{references.bib}
+
+\geometry{margin=2.5cm}
+\hypersetup{colorlinks=true, linkcolor=blue!60!black, citecolor=blue!60!black, urlcolor=blue!60!black}
+
+\newtheorem{definition}{Definition}
+\newtheorem{remark}{Remark}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{Construction of the SPX Implied Volatility Surface\\[6pt]
+       \large Step~1 of the Local Stochastic Volatility Model}
+\author{Imperial College London --- Master's Thesis}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Introduction and Motivation}
+\label{sec:intro}
+% ══════════════════════════════════════════════════════════════════════════════
+
+The goal of this chapter is to construct a continuous implied volatility surface
+from discrete market observations of S\&P~500 (SPX) index options. This surface
+serves as the calibration target for the Local Stochastic Volatility (LSV) model
+developed in later chapters.
+
+An \emph{implied volatility surface} is a two-dimensional function
+$\sigma_{\text{imp}}(K, T)$ that maps every combination of strike price~$K$ and
+time to maturity~$T$ to a single volatility number. Rather than assuming that
+volatility is constant (as the original Black--Scholes model does), the surface
+captures how the market prices risk differently depending on how far an option's
+strike is from the current price and how much time remains until expiry
+\parencite{gatheral2006volatility, cont2002dynamics}.
+
+The pipeline proceeds in seven stages:
+\begin{enumerate}[nosep]
+    \item Fetch market data: spot price, risk-free rate, dividend yield, and the
+          full SPX option chain.
+    \item Clean the data: remove illiquid contracts and those violating
+          no-arbitrage bounds.
+    \item Filter to out-of-the-money options only.
+    \item Invert the Black--Scholes formula to recover implied volatilities.
+    \item Interpolate the scattered implied volatilities onto a regular grid
+          using radial basis functions.
+    \item Plot the resulting surface and per-expiry volatility smiles.
+    \item Validate the surface by repricing a sample of market options.
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Market Data}
+\label{sec:data}
+% ══════════════════════════════════════════════════════════════════════════════
+
+All data is sourced from Yahoo Finance via the \texttt{yfinance} Python library.
+No paid API key is required; however, the data reflects delayed or end-of-day
+quotes rather than real-time feeds.
+
+\subsection{Spot Price}
+
+The spot price $S$ is the most recent closing value of the S\&P~500 index
+(\texttt{\^{}SPX}). This single number anchors the entire surface: all strikes
+are measured relative to~$S$ through the moneyness ratio $K/S$.
+
+\subsection{Risk-Free Rate}
+
+The risk-free rate $r$ is obtained from the 13-week US Treasury Bill yield
+(\texttt{\^{}IRX} on Yahoo Finance). The T-Bill is the standard short-term
+risk-free proxy in academic option pricing because US Treasury securities carry
+negligible default risk.
+
+Yahoo Finance reports the T-Bill yield as an annualised percentage (e.g.,
+$4.35\%$). We convert to a decimal and treat it as a continuously compounded
+rate:
+\begin{equation}
+    r = \frac{\text{IRX}}{100}.
+    \label{eq:rate}
+\end{equation}
+
+\begin{remark}
+A single short-term rate is used for all maturities. In principle, one could use
+a term structure of rates (different rates for different option expiries), which
+would reduce the call--put implied volatility discontinuity discussed in
+Section~\ref{sec:otm}. This simplification is standard in academic
+implementations and any systematic effect is small relative to other sources of
+noise.
+\end{remark}
+
+\subsection{Dividend Yield}
+
+The continuous dividend yield $q$ is Yahoo Finance's trailing twelve-month
+dividend yield for SPX. It enters the Black--Scholes formula through the forward
+price:
+\begin{equation}
+    F = S \, e^{(r - q) T},
+    \label{eq:forward}
+\end{equation}
+which represents the cost-of-carry-adjusted expected level of the index at
+maturity~$T$. The term $r - q$ reflects the net cost of holding the index:
+earning the risk-free rate on cash but forgoing the dividends paid by the index.
+
+If the fetch fails, a fallback value of $q = 1.195\%$ is used, based on recent
+historical SPX dividend yields.
+
+\subsection{Option Chain}
+
+Yahoo Finance provides full option chains for SPX across all available expiry
+dates. For each expiry, both call and put contracts are retrieved. Each contract
+carries the following fields (among others):
+\begin{itemize}[nosep]
+    \item \textbf{Strike} ($K$): the price at which the option can be exercised.
+    \item \textbf{Bid / Ask}: the best quoted prices to sell / buy the option.
+    \item \textbf{Open Interest}: the number of outstanding contracts, a proxy
+          for liquidity.
+    \item \textbf{Implied Volatility} (\texttt{iv\_yf}): Yahoo's own IV
+          estimate, retained for comparison but not used in our surface.
+\end{itemize}
+
+The \textbf{mid price} is computed as the average of the bid and ask:
+\begin{equation}
+    \text{mid} = \frac{\text{bid} + \text{ask}}{2}.
+    \label{eq:mid}
+\end{equation}
+This is used as the market price for all subsequent calculations because neither
+the bid nor the ask alone represents a fair value---the mid is the best available
+estimate of where a trade would execute.
+
+\textbf{Time to maturity} is calculated as:
+\begin{equation}
+    T = \frac{\text{expiry date} - \text{today}}{\text{365 days}},
+    \label{eq:ttm}
+\end{equation}
+expressed in years. Only options with $T \in [7/365,\; 2.0]$ are retained.
+Options expiring within one week are excluded because their prices are dominated
+by microstructure effects (gamma risk, pin risk), while options beyond two years
+are too illiquid to provide reliable implied volatilities.
+
+\textbf{Moneyness} is defined as:
+\begin{equation}
+    m = \frac{K}{S}.
+    \label{eq:moneyness}
+\end{equation}
+A moneyness of~$1$ means the strike equals the current index level
+(at-the-money). Values below~$1$ correspond to strikes below the index (in-the-money
+calls / out-of-the-money puts), and values above~$1$ correspond to strikes above
+the index.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Data Cleaning}
+\label{sec:cleaning}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Raw option data from Yahoo Finance contains many contracts that are stale,
+illiquid, or mispriced. Using them would introduce noise into the implied
+volatility surface. Three sequential filters are applied.
+
+\subsection{Liquidity Filter}
+
+The following conditions must all hold for an option to be retained:
+\begin{enumerate}[nosep]
+    \item \textbf{Open interest} $\geq 100$. Contracts with fewer outstanding
+          positions are likely stale or thinly traded, producing unreliable mid
+          prices.
+    \item \textbf{Bid} $> 0$. A zero bid means no market participant is willing
+          to buy the option at any price, so the quoted ask is meaningless.
+    \item \textbf{Relative bid--ask spread} $\leq 20\%$:
+          \begin{equation}
+              \frac{\text{ask} - \text{bid}}{\text{mid}} \leq 0.20.
+              \label{eq:spread}
+          \end{equation}
+          Wide spreads indicate poor liquidity; the mid price of such options is
+          an unreliable estimate of fair value.
+    \item \textbf{Moneyness} $K/S \in [0.70,\, 1.30]$. Deep out-of-the-money
+          options (far from the current price) have near-zero prices and
+          negligible vega, making implied volatility extraction numerically
+          unstable.
+    \item \textbf{Mid price} $> 0$. Options with zero or negative mid prices
+          are discarded.
+\end{enumerate}
+
+\subsection{No-Arbitrage Filter}
+\label{sec:noarb}
+
+European option prices must satisfy model-independent bounds that follow from
+the absence of arbitrage. Any option violating these bounds contains a data
+error or has been mispriced by the market maker. The bounds are (with a $5\%$
+tolerance to accommodate market microstructure):
+
+\textbf{Calls:}
+\begin{align}
+    C &\geq 0.95 \times \max\!\big(0,\; S\,e^{-qT} - K\,e^{-rT}\big),
+    \label{eq:call_lb} \\
+    C &\leq 1.05 \times S\,e^{-qT}.
+    \label{eq:call_ub}
+\end{align}
+
+\textbf{Puts:}
+\begin{align}
+    P &\geq 0.95 \times \max\!\big(0,\; K\,e^{-rT} - S\,e^{-qT}\big),
+    \label{eq:put_lb} \\
+    P &\leq 1.05 \times K\,e^{-rT}.
+    \label{eq:put_ub}
+\end{align}
+
+The lower bound is the discounted intrinsic value: the minimum the option must
+be worth to prevent riskless profit. The upper bound reflects the maximum
+possible payoff: a call can never be worth more than the (discounted) index
+itself, and a put can never be worth more than the (discounted) strike.
+
+The $5\%$ tolerance allows for small bid--ask-induced deviations that occur
+naturally in real markets without indicating a true arbitrage.
+
+\subsection{Out-of-the-Money Filter}
+\label{sec:otm}
+
+After the above filters, we retain only \textbf{out-of-the-money} (OTM) options:
+\begin{itemize}[nosep]
+    \item \textbf{Calls} with $K \geq S$ (moneyness $\geq 1$),
+    \item \textbf{Puts} with $K < S$ (moneyness $< 1$).
+\end{itemize}
+
+OTM options are preferred for three reasons:
+\begin{enumerate}[nosep]
+    \item \textbf{Liquidity}: OTM options are more actively traded than their
+          in-the-money (ITM) counterparts, producing tighter bid--ask spreads
+          and more reliable mid prices.
+    \item \textbf{Numerical stability}: ITM option prices are dominated by
+          intrinsic value (the payoff if exercised immediately), with only a
+          thin layer of time value on top. Extracting implied volatility from
+          time value alone magnifies any noise in the mid price.
+    \item \textbf{Convention}: This is the standard approach in both academic
+          literature and industry practice. The CBOE VIX methodology
+          uses OTM options exclusively \parencite{cboe2019vix}.
+\end{enumerate}
+
+By put--call parity (Section~\ref{sec:bsm}), a European call and put at the
+same strike and expiry must have the same implied volatility. Therefore, using
+OTM options from both sides of the strike spectrum (puts on the left, calls on
+the right) produces a single coherent surface without redundancy.
+
+\begin{remark}
+Even with OTM filtering, a small discontinuity at the at-the-money boundary
+($K = S$) can appear because the single risk-free rate and dividend yield used
+in the Black--Scholes inversion may not perfectly match the market-implied
+forward price. This effect grows with maturity because the forward price
+$F = S\,e^{(r-q)T}$ amplifies any error in $(r - q)$ over longer horizons.
+Using a market-implied forward (extracted from put--call parity across strikes)
+would eliminate this artefact.
+\end{remark}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{The Black--Scholes--Merton Model}
+\label{sec:bsm}
+% ══════════════════════════════════════════════════════════════════════════════
+
+The Black--Scholes--Merton (BSM) model, introduced by
+\textcite{black1973pricing} and extended by \textcite{merton1973theory} to
+include continuous dividends, provides a closed-form formula for the price of a
+European option.
+
+\subsection{Assumptions}
+
+The model assumes:
+\begin{enumerate}[nosep]
+    \item The underlying asset price $S_t$ follows a \textbf{geometric Brownian
+          motion}:
+          \begin{equation}
+              dS_t = (r - q)\,S_t\,dt + \sigma\,S_t\,dW_t,
+              \label{eq:gbm}
+          \end{equation}
+          where $r$ is the risk-free rate, $q$ is the continuous dividend yield,
+          $\sigma$ is the constant volatility, and $W_t$ is a standard Brownian
+          motion (a continuous random walk).
+    \item Markets are frictionless: no transaction costs, no taxes, continuous
+          trading.
+    \item The risk-free rate $r$ and dividend yield $q$ are constant.
+    \item The option can only be exercised at maturity (European-style).
+\end{enumerate}
+
+Under these assumptions, the log-return of the asset over any interval is
+normally distributed:
+\begin{equation}
+    \ln\!\frac{S_T}{S_0} \sim \mathcal{N}\!\left(\left(r - q - \tfrac{\sigma^2}{2}\right)T,\;\; \sigma^2 T\right).
+    \label{eq:log_return}
+\end{equation}
+
+\subsection{The Pricing Formulae}
+
+\begin{definition}[BSM European Option Price]
+The price of a European call option with strike $K$ and maturity $T$ is:
+\begin{equation}
+    C = S\,e^{-qT}\,\Phi(d_1) - K\,e^{-rT}\,\Phi(d_2),
+    \label{eq:bsm_call}
+\end{equation}
+and the price of a European put is:
+\begin{equation}
+    P = K\,e^{-rT}\,\Phi(-d_2) - S\,e^{-qT}\,\Phi(-d_1),
+    \label{eq:bsm_put}
+\end{equation}
+where $\Phi(\cdot)$ is the cumulative distribution function (CDF) of the
+standard normal distribution, and
+\begin{align}
+    d_1 &= \frac{\ln(S/K) + (r - q + \tfrac{1}{2}\sigma^2)\,T}{\sigma\sqrt{T}},
+    \label{eq:d1} \\[4pt]
+    d_2 &= d_1 - \sigma\sqrt{T}.
+    \label{eq:d2}
+\end{align}
+\end{definition}
+
+In words: $d_1$ and $d_2$ measure how many standard deviations the current
+index level is from the strike, adjusted for drift and time. The terms
+$S\,e^{-qT}$ and $K\,e^{-rT}$ are the \emph{present values} of the index and
+strike respectively, discounted at the dividend yield and risk-free rate.
+
+$\Phi(d_1)$ can be interpreted as the probability (under the asset measure)
+that the option expires in the money, while $\Phi(d_2)$ is the same probability
+under the risk-neutral measure.
+
+\subsection{Put--Call Parity}
+
+A fundamental relationship links European calls and puts at the same strike and
+maturity:
+\begin{equation}
+    C - P = S\,e^{-qT} - K\,e^{-rT}.
+    \label{eq:pcp}
+\end{equation}
+This holds regardless of the volatility model and implies that a call and put at
+the same $(K, T)$ must yield the same implied volatility.
+
+\subsection{Vega}
+
+The sensitivity of the option price to volatility is called \textbf{vega}:
+\begin{equation}
+    \mathcal{V} = \frac{\partial V}{\partial \sigma}
+                = S\,e^{-qT}\,\phi(d_1)\,\sqrt{T},
+    \label{eq:vega}
+\end{equation}
+where $\phi(\cdot)$ is the standard normal probability density function (PDF)
+and $V$ denotes either the call or put price (vega is identical for both, by
+put--call parity).
+
+Vega is always non-negative and is largest for at-the-money options with long
+maturities. It approaches zero for deep out-of-the-money or very short-dated
+options. This quantity is critical for the implied volatility inversion described
+next: it serves as the derivative in Newton--Raphson iteration.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Implied Volatility Computation}
+\label{sec:iv}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Definition}
+
+\begin{definition}[Implied Volatility]
+The implied volatility $\sigma_{\text{imp}}$ of an option with observed market
+price $V^{\text{mkt}}$ is the unique value of $\sigma$ that, when substituted
+into the BSM formula, reproduces the market price:
+\begin{equation}
+    V^{\text{BSM}}(S, K, T, r, q, \sigma_{\text{imp}}) = V^{\text{mkt}}.
+    \label{eq:iv_def}
+\end{equation}
+\end{definition}
+
+There is no closed-form solution for $\sigma_{\text{imp}}$---the BSM formula
+cannot be algebraically inverted for $\sigma$ (see \cite{jaeckel2015lets} for a
+detailed treatment of numerical IV computation). Instead, we must solve
+equation~\eqref{eq:iv_def} numerically. This is a root-finding problem: find
+$\sigma$ such that
+\begin{equation}
+    f(\sigma) \coloneqq V^{\text{BSM}}(\sigma) - V^{\text{mkt}} = 0.
+    \label{eq:rootfinding}
+\end{equation}
+
+\subsection{Newton--Raphson Method}
+\label{sec:newton}
+
+Newton--Raphson is an iterative root-finding algorithm. Given an initial guess
+$\sigma_0$, each iteration updates the estimate using the function value and its
+derivative:
+\begin{equation}
+    \sigma_{n+1} = \sigma_n - \frac{f(\sigma_n)}{f'(\sigma_n)}
+                 = \sigma_n - \frac{V^{\text{BSM}}(\sigma_n) - V^{\text{mkt}}}
+                                   {\mathcal{V}(\sigma_n)},
+    \label{eq:newton}
+\end{equation}
+where $\mathcal{V}(\sigma_n)$ is the BSM vega at the current estimate. The
+algorithm terminates when $|f(\sigma_n)| < \epsilon$, where
+$\epsilon = 10^{-6}$ is the convergence tolerance.
+
+\textbf{Why Newton--Raphson works well here}: The BSM price is a smooth, monotonically
+increasing function of $\sigma$ (higher volatility always means a higher option
+price). This means there is exactly one root, and Newton--Raphson converges
+\emph{quadratically}---the number of correct digits roughly doubles each
+iteration. Starting from a warm-start of $\sigma_0 = 0.25$ (a typical equity
+volatility), convergence usually occurs in 3--5 iterations
+\parencite{brenner1988note}.
+
+\textbf{When it fails}: Newton--Raphson can stall when vega is very small
+(deep OTM or very short-dated options), causing the update step
+$f(\sigma)/\mathcal{V}(\sigma)$ to become excessively large. To handle this,
+the estimate is clipped to the admissible range $[10^{-6},\; 5.0]$ at each
+step, and if convergence is not achieved within 100 iterations, the algorithm
+falls back to Brent's method.
+
+\subsection{Brent's Method (Fallback)}
+\label{sec:brent}
+
+Brent's method \parencite{brent1973algorithms} is a bracketed root-finding
+algorithm that combines bisection, secant, and inverse quadratic interpolation.
+Unlike Newton--Raphson, it requires a bracket $[a, b]$ such that $f(a)$ and
+$f(b)$ have opposite signs (guaranteeing a root exists between them), but it
+does not require the derivative.
+
+We use the bracket $[\sigma_{\text{lo}},\; \sigma_{\text{hi}}] = [10^{-6},\; 5.0]$.
+If $f(\sigma_{\text{lo}})$ and $f(\sigma_{\text{hi}})$ do not have opposite
+signs, the option price is inconsistent with the BSM model (e.g., below
+intrinsic value), and the implied volatility is recorded as undefined (\texttt{NaN}).
+
+\subsection{Sanity Checks}
+
+Before attempting inversion, the market price is checked against the discounted
+intrinsic value:
+\begin{equation}
+    \text{intrinsic} = \max\!\Big(0,\;
+        \begin{cases}
+            S\,e^{-qT} - K\,e^{-rT} & \text{(call)}, \\
+            K\,e^{-rT} - S\,e^{-qT} & \text{(put)}.
+        \end{cases}\Big)
+    \label{eq:intrinsic}
+\end{equation}
+If $V^{\text{mkt}} \leq \text{intrinsic} + \epsilon$, the option has no time
+value to extract, and implied volatility is undefined.
+
+After inversion, options with $\sigma_{\text{imp}} \notin [0.01,\; 3.00]$ (i.e.,
+outside $1\%$--$300\%$ annualised) are discarded as numerical artefacts.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Surface Interpolation}
+\label{sec:interpolation}
+% ══════════════════════════════════════════════════════════════════════════════
+
+After implied volatility computation, we have a set of scattered observations
+$\{(x_i, T_i, \sigma_i)\}_{i=1}^{N}$, where $x_i = \ln(K_i / S)$ is the
+log-moneyness and $T_i$ is the time to maturity. These observations lie at
+irregular positions determined by whatever strikes and expiries the exchange
+lists. The downstream LSV model requires a \emph{continuous, smooth} surface
+defined on a regular grid.
+
+\subsection{Log-Moneyness}
+\label{sec:logm}
+
+We parameterise the strike axis using \textbf{log-moneyness}:
+\begin{equation}
+    x = \ln\!\left(\frac{K}{S}\right).
+    \label{eq:log_moneyness}
+\end{equation}
+\begin{itemize}[nosep]
+    \item $x = 0$: at-the-money ($K = S$).
+    \item $x < 0$: strike below the index (OTM puts).
+    \item $x > 0$: strike above the index (OTM calls).
+\end{itemize}
+
+Log-moneyness is preferred over raw strike $K$ or moneyness $K/S$ because:
+\begin{enumerate}[nosep]
+    \item The volatility smile is approximately symmetric in log-moneyness,
+          improving interpolation quality.
+    \item The at-the-money point is centred at $x = 0$ by construction.
+    \item Numerical conditioning of the interpolation is improved (the range of
+          $x$ is small and centred, rather than spanning thousands of strike
+          dollars).
+\end{enumerate}
+
+\subsection{Radial Basis Function (RBF) Interpolation}
+\label{sec:rbf}
+
+Given $N$ scattered data points $\{(\mathbf{p}_i, \sigma_i)\}$ where
+$\mathbf{p}_i = (T_i, x_i) \in \mathbb{R}^2$, we seek a smooth function
+$\hat{\sigma}(\mathbf{p})$ that approximates the data. A \textbf{radial basis
+function} (RBF) interpolant \parencite{buhmann2003radial} takes the form:
+\begin{equation}
+    \hat{\sigma}(\mathbf{p}) = \sum_{i=1}^{N} w_i \, \varphi\!\big(\|\mathbf{p} - \mathbf{p}_i\|\big) + c_0 + c_1 T + c_2 x,
+    \label{eq:rbf}
+\end{equation}
+where:
+\begin{itemize}[nosep]
+    \item $\|\mathbf{p} - \mathbf{p}_i\|$ is the Euclidean distance from the
+          evaluation point $\mathbf{p}$ to the $i$-th data point $\mathbf{p}_i$.
+    \item $\varphi(r)$ is the radial basis function (kernel), which depends only
+          on the distance $r$.
+    \item $w_i$ are the weights, determined by fitting to the data.
+    \item $c_0 + c_1 T + c_2 x$ is a linear polynomial term that captures any
+          global trend (tilt) in the surface.
+\end{itemize}
+
+The key idea is that each data point acts as a ``bump'' centred at its location,
+and the surface is built by summing these bumps with appropriate weights. The
+word ``radial'' means each basis function is symmetric around its centre---it
+depends only on the distance, not the direction.
+
+\subsection{Thin-Plate Spline Kernel}
+\label{sec:tps}
+
+The specific kernel used is the \textbf{thin-plate spline}:
+\begin{equation}
+    \varphi(r) = r^2 \ln(r), \qquad r > 0, \qquad \varphi(0) = 0.
+    \label{eq:tps_kernel}
+\end{equation}
+
+The thin-plate spline was introduced by \textcite{duchon1977splines} and is
+extensively analysed in \textcite{wahba1990spline}. The name comes from a
+physical analogy: if you take a thin sheet of metal and force it to pass through
+a set of points, the shape it naturally assumes (the one that minimises bending
+energy) is exactly the thin-plate spline. Formally, among all surfaces $f$ that
+interpolate the data points, the thin-plate spline minimises the \emph{bending
+energy}:
+\begin{equation}
+    \int\!\!\int \left[\left(\frac{\partial^2 f}{\partial x^2}\right)^{\!2}
+    + 2\left(\frac{\partial^2 f}{\partial x\,\partial y}\right)^{\!2}
+    + \left(\frac{\partial^2 f}{\partial y^2}\right)^{\!2}\right] dx\,dy.
+    \label{eq:bending}
+\end{equation}
+
+This is critical for our application because:
+\begin{enumerate}[nosep]
+    \item The resulting surface is \textbf{infinitely differentiable} in the
+          interior, which is required by Dupire's equation
+          (Section~\ref{sec:dupire}) for computing local volatility. Dupire's
+          formula involves both $\partial\sigma/\partial T$ and
+          $\partial^2\sigma/\partial K^2$, so the surface must be at least
+          twice differentiable.
+    \item The surface is \textbf{as smooth as possible} given the data, which
+          suppresses artificial oscillations that would produce spurious local
+          volatility spikes.
+    \item Unlike polynomial fitting, it does not require choosing a polynomial
+          degree or risking Runge's phenomenon (wild oscillations at the
+          boundaries).
+\end{enumerate}
+
+\subsection{Smoothing (Regularisation)}
+\label{sec:smoothing}
+
+With exact interpolation ($\hat{\sigma}(\mathbf{p}_i) = \sigma_i$ for all~$i$),
+the surface would pass through every data point. However, since mid prices are
+noisy estimates of true option values (they are simply the average of bid and
+ask), the ``exact'' implied volatilities themselves contain noise. Forcing the
+surface through noisy points would create artificial bumps and wiggles.
+
+Instead, a \textbf{smoothing parameter} $\lambda > 0$ is introduced. The
+weights $\{w_i\}$ are found by minimising:
+\begin{equation}
+    \sum_{i=1}^{N} \big[\hat{\sigma}(\mathbf{p}_i) - \sigma_i\big]^2
+    + \lambda \cdot (\text{bending energy}),
+    \label{eq:smoothing}
+\end{equation}
+which trades off closeness to the data (first term) against smoothness of the
+surface (second term). Larger $\lambda$ produces a smoother surface that deviates
+more from individual data points; smaller $\lambda$ tracks the data more closely
+at the cost of potential oscillations.
+
+The value used is $\lambda = N \times 5 \times 10^{-4}$, where $N$ is the
+number of data points. This was chosen empirically to produce a surface with
+sub-1-vol-point mean absolute error while remaining smooth enough for stable
+local volatility computation.
+
+\subsection{Grid Construction}
+
+The interpolated surface is evaluated on a regular $60 \times 50$ grid:
+\begin{itemize}[nosep]
+    \item \textbf{Log-moneyness axis}: 60 equally spaced points between the
+          2nd and 98th percentiles of the observed log-moneyness values.
+    \item \textbf{TTM axis}: 50 equally spaced points between the 2nd and 98th
+          percentiles of the observed times to maturity.
+\end{itemize}
+
+The 2nd--98th percentile trimming avoids extrapolation into regions with no
+supporting data, where the thin-plate spline can produce unreliable values.
+Any grid values below $0.01$ or above $3.0$ (annualised) are clipped as
+numerical artefacts.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Connection to Local Volatility (Dupire's Equation)}
+\label{sec:dupire}
+% ══════════════════════════════════════════════════════════════════════════════
+
+The primary consumer of the IV surface is Dupire's equation
+\parencite{dupire1994pricing}, which converts the implied volatility surface
+into a \textbf{local volatility} surface $\sigma_{\text{loc}}(K, T)$. Without
+stating the full derivation (which belongs in the LSV model chapter), Dupire's
+formula involves:
+\begin{equation}
+    \sigma_{\text{loc}}^2(K, T) = \frac{
+        \dfrac{\partial C}{\partial T} + (r - q)\,K\,\dfrac{\partial C}{\partial K} + q\,C
+    }{
+        \dfrac{1}{2}\,K^2\,\dfrac{\partial^2 C}{\partial K^2}
+    },
+    \label{eq:dupire}
+\end{equation}
+where $C(K, T)$ is the market (or model) call price surface. Since $C$ is
+computed from the IV surface via BSM, the smoothness of $\sigma_{\text{imp}}$
+directly determines the stability of $\sigma_{\text{loc}}$. A noisy IV surface
+would produce negative values inside the square root of~\eqref{eq:dupire},
+yielding undefined local volatilities.
+
+This is why the thin-plate spline with smoothing is essential: it provides
+the twice-differentiable, physically sensible surface that Dupire's equation
+requires. \textcite{fengler2009arbitrage} demonstrates that careful smoothing of
+the IV surface is critical for obtaining stable and arbitrage-free local
+volatilities, and \textcite{glaser2012arbitrage} further analyse approximation
+methods for call price surfaces that preserve no-arbitrage conditions.
+\textcite{homescu2011implied} provides a comprehensive survey of IV surface
+construction methodologies, including kernel-based and spline-based approaches
+consistent with the method used here.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Validation}
+\label{sec:validation}
+% ══════════════════════════════════════════════════════════════════════════════
+
+To assess the quality of the interpolated surface, a random sample of 60 options
+is drawn from the cleaned dataset. For each sampled option with known strike
+$K_j$, maturity $T_j$, and computed implied volatility $\sigma_j$:
+
+\begin{enumerate}[nosep]
+    \item The surface IV is evaluated at $(\ln(K_j/S),\; T_j)$ using bilinear
+          interpolation on the regular grid.
+    \item The \textbf{IV absolute error} is recorded:
+          \begin{equation}
+              e_j^{\text{IV}} = |\hat{\sigma}(\ln(K_j/S),\; T_j) - \sigma_j|.
+              \label{eq:iv_err}
+          \end{equation}
+    \item The option is \textbf{repriced} using the surface IV via the BSM
+          formula, and the percentage price error is computed:
+          \begin{equation}
+              e_j^{\text{price}} = \frac{V^{\text{BSM}}(\hat{\sigma}_j) - V_j^{\text{mkt}}}{V_j^{\text{mkt}}} \times 100\%.
+              \label{eq:price_err}
+          \end{equation}
+\end{enumerate}
+
+\subsection{Metrics}
+
+Two sets of metrics are reported:
+
+\textbf{Primary (IV-space)}: The mean absolute error (MAE), root mean squared
+error (RMSE), and maximum error of $e_j^{\text{IV}}$. These measure how
+faithfully the continuous surface reproduces the discrete market-observed
+implied volatilities. This is the correct metric for surface quality because the
+surface exists in IV-space.
+
+\textbf{Secondary (price-space, liquid options only)}: Percentage price errors
+are only computed for options with market price $\geq \$10$. For cheap deep-OTM
+options, vega is near zero, meaning a tiny IV difference causes an enormous
+percentage price change. This is a mathematical singularity inherent to the
+BSM mapping, not a deficiency of the surface. Excluding cheap options prevents
+this artefact from dominating the error statistics.
+
+A well-calibrated surface typically achieves an IV MAE of $0.5$--$1.0$ vol
+points ($0.005$--$0.010$ in decimal), confirming that the smoothing preserves
+the market structure while filtering out microstructure noise
+\parencite{gatheral2006volatility}.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Summary of Outputs}
+\label{sec:outputs}
+% ══════════════════════════════════════════════════════════════════════════════
+
+The pipeline produces the following files:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lp{8.5cm}@{}}
+\toprule
+\textbf{File} & \textbf{Description} \\
+\midrule
+\texttt{data/spx\_iv\_data.csv}        & Cleaned option chain with computed IVs \\
+\texttt{data/validation\_results.csv}  & Repricing comparison for 60 sampled options \\
+\texttt{arrays/ttm\_grid.npy}          & 1D array of 50 TTM grid values \\
+\texttt{arrays/log\_m\_grid.npy}       & 1D array of 60 log-moneyness grid values \\
+\texttt{arrays/iv\_surface.npy}        & $60 \times 50$ interpolated IV surface \\
+\texttt{plots/iv\_surface\_3d.png}     & 3D surface visualisation \\
+\texttt{plots/iv\_smiles.png}          & Per-expiry volatility smile overlays \\
+\texttt{plots/validation.png}          & Validation diagnostic plots \\
+\bottomrule
+\end{tabular}
+\caption{Output files produced by the IV surface pipeline.}
+\label{tab:outputs}
+\end{table}
+
+The three \texttt{.npy} arrays constitute the surface in machine-readable form
+and are loaded directly by the LSV model in Step~2.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Pipeline Summary}
+\label{sec:pipeline}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{algorithm}[H]
+\caption{SPX Implied Volatility Surface Construction}
+\label{alg:pipeline}
+\begin{algorithmic}[1]
+\State Fetch spot price $S$, risk-free rate $r$, dividend yield $q$ from Yahoo Finance
+\State Fetch full SPX option chain across all available expiries
+\State \textbf{Filter}: remove options with low open interest, wide spreads, or zero bids
+\State \textbf{Filter}: remove options violating no-arbitrage bounds
+\State \textbf{Filter}: retain only OTM options (calls with $K \geq S$, puts with $K < S$)
+\State Compute implied volatility $\sigma_i$ for each remaining option via Newton--Raphson / Brent
+\State Discard options with $\sigma_i \notin [0.01, 3.0]$
+\State Fit RBF thin-plate spline interpolant to scattered $(T_i, \ln(K_i/S), \sigma_i)$ data
+\State Evaluate interpolant on regular $60 \times 50$ grid
+\State Save surface arrays and plot diagnostics
+\State Validate by repricing 60 random options and reporting IV MAE
+\end{algorithmic}
+\end{algorithm}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\printbibliography[heading=bibintoc, title={References}]
+% ══════════════════════════════════════════════════════════════════════════════
+
+\end{document}
