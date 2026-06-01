@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Top-level constants for the Bergomi particle-method leverage calibration (Step 3b)."""
 
-# ===== PATHS =====
+# Paths
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -13,7 +13,7 @@ DATA_DIR = BERGOMI_DIR / "data"
 PLOT_DIR = BERGOMI_DIR / "plots"
 ARRAY_DIR = BERGOMI_DIR / "arrays"
 
-# ===== TOP-LEVEL PARAMETERS =====
+# Parameters
 N_PARTICLES = 5_000
 DT = 1.0 / 504.0
 BANDWIDTH_OVERRIDE = None
@@ -23,6 +23,6 @@ SEED = 42
 N_SPOT_GRID = 200
 SPOT_GRID_RANGE = (0.70, 1.30)
 
-# Ensure generated-output directories exist (git-ignored, recreated each run).
+# Create output dirs (git-ignored).
 for _d in (DATA_DIR, PLOT_DIR, ARRAY_DIR):
     _d.mkdir(parents=True, exist_ok=True)

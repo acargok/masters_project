@@ -9,10 +9,10 @@ Runs the entire Master's-thesis pipeline in dependency order:
     2.  iv_surface/iv_explorer.py            — IV surface diagnostics
     3.  dupire_vol/dupire_local_vol.py       — Dupire local-vol surface
     4.  dupire_vol/dupire_explorer.py        — Dupire diagnostics
-    5.  lsv/run_lsv.py                       — Heston calibration + particle method + validation
+    5.  lsv_heston/run_lsv_heston.py         — Heston calibration + particle method + validation
     6.  lsv_bergomi/run_lsv_bergomi.py       — Bergomi forward-variance + particle method + validation
     7.  lsv_bergomi/lsv_explorer.py          — Bergomi LSV diagnostics
-    8.  lsv/lsv_explorer.py                  — Heston LSV diagnostics
+    8.  lsv_heston/lsv_explorer.py           — Heston LSV diagnostics
     9.  pricing/run_pricing.py               — cliquet MC pricing
     10. pricing/pricing_explorer.py          — cliquet diagnostics
 
@@ -54,10 +54,10 @@ STEPS = [
     (2,  "iv_surface",  "iv_explorer.py",       "IV explorer"),
     (3,  "dupire_vol",  "dupire_local_vol.py",  "Dupire local vol"),
     (4,  "dupire_vol",  "dupire_explorer.py",   "Dupire explorer"),
-    (5,  "lsv",         "run_lsv.py",           "Heston LSV pipeline"),
+    (5,  "lsv_heston",  "run_lsv_heston.py",    "Heston LSV pipeline"),
     (6,  "lsv_bergomi", "run_lsv_bergomi.py",   "Bergomi LSV pipeline"),
     (7,  "lsv_bergomi", "lsv_explorer.py",      "Bergomi LSV explorer"),
-    (8,  "lsv",         "lsv_explorer.py",      "Heston LSV explorer"),
+    (8,  "lsv_heston",  "lsv_explorer.py",      "Heston LSV explorer"),
     (9,  "pricing",     "run_pricing.py",       "Cliquet pricing"),
     (10, "pricing",     "pricing_explorer.py",  "Pricing explorer"),
 ]
@@ -167,9 +167,9 @@ def main():
                         help="Extra args for one step, e.g. "
                              "--extra '5 --skip-heston'. May be repeated.")
     parser.add_argument("--skip-heston", action="store_true",
-                        help="Forward --skip-heston to step 5 (run_lsv.py)")
+                        help="Forward --skip-heston to step 5 (run_lsv_heston.py)")
     parser.add_argument("--skip-particles", action="store_true",
-                        help="Forward --skip-particles to step 5 (run_lsv.py)")
+                        help="Forward --skip-particles to step 5 (run_lsv_heston.py)")
     args = parser.parse_args()
 
     # Build the list of step ids to execute

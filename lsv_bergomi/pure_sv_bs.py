@@ -6,10 +6,6 @@ import numpy as np
 from scipy.stats import norm
 
 
-# =============================================================================
-# Black-Scholes helpers
-# =============================================================================
-
 def bs_call_price(S, K, T, r, q, sigma):
     if T <= 0 or sigma <= 0:
         return max(S * np.exp(-q * T) - K * np.exp(-r * T), 0.0)

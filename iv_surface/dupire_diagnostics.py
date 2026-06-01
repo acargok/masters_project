@@ -9,64 +9,45 @@ from config import *
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# SECTION 4b — DUPIRE COMPATIBILITY DIAGNOSTICS
-# =============================================================================
+# Section 4b — Dupire compatibility diagnostics
 
 def validate_dupire_compatibility(
         total_var_surface: np.ndarray,
         ttm_grid: np.ndarray,
         log_m_grid: np.ndarray) -> dict:
     """
-    Diagnostic: assess whether the total variance surface is suitable for
-    Dupire local volatility computation.
+    Check whether the total-variance surface is usable for Dupire local vol.
+    A surface smooth in value space can still give negative local variance if
+    its k-derivatives are unstable. Evaluates, with w'=∂w/∂k, w''=∂²w/∂k²:
 
-    A surface that looks smooth in value space can still produce negative
-    local variances if its first and second k-derivatives are unstable.
-    This function evaluates the three key quantities directly:
+      ∂w/∂T       must be ≥ 0 (calendar spread)
+      ∂²w/∂k²     negative curvature → butterfly arbitrage
+      g(k,T)      Gatheral (2004) density: g = (1 − k·w'/(2w))²
+                  − (w')²/4·(1/w + ¼) + w''/2;  g < 0 → imaginary local vol
+      σ²_loc(k,T) = (∂w/∂T) / g
 
-      ∂w/∂T       — must be ≥ 0 (calendar spread, already enforced, but verify)
-      ∂²w/∂k²     — negative curvature signals butterfly arbitrage
-      g(k, T)     — Gatheral (2004) risk-neutral density indicator:
-
-          g = (1 − k·w'/(2w))² − (w')²/4·(1/w + ¼) + w''/2
-
-          where w' = ∂w/∂k,  w'' = ∂²w/∂k².
-          g < 0 → negative risk-neutral density; local vol is imaginary.
-
-      σ²_loc(k,T) — Dupire local variance = (∂w/∂T) / g(k,T)
-
-    This is the standard test for whether a smooth-looking surface is
-    actually usable downstream.  It is the quantity that in-sample repricing
-    validation does NOT check.
-
-    Note: ∂w/∂T is computed holding k = ln(K/F(T)) fixed.  For a first-order
-    diagnostic we ignore the forward-curve correction term (∂F/∂T effect),
-    which is small when the forward curve is smooth.
-
-    Returns
-    -------
-    dict
-        Summary statistics plus the g and local-variance arrays for plotting.
+    ∂w/∂T is taken holding k = ln(K/F(T)) fixed (forward-curve correction
+    ignored; small for smooth forwards). Returns summary stats plus g and
+    local-variance arrays for plotting.
     """
     w = total_var_surface   # (n_k, n_T)
 
-    # ── ∂w/∂k, ∂²w/∂k²: np.gradient on the uniform k-grid ──
+    # ∂w/∂k, ∂²w/∂k² via np.gradient on the uniform k-grid
     dk = float(log_m_grid[1] - log_m_grid[0])
     dw_dk   = np.gradient(w, dk, axis=0)   # (n_k, n_T)
     d2w_dk2 = np.gradient(dw_dk, dk, axis=0)
 
-    # ── ∂w/∂T: forward difference, aligns w/ T index j ──
+    # ∂w/∂T: forward difference, aligned to T index j
     dT    = np.diff(ttm_grid)                         # (n_T-1,)
     dw_dT = np.diff(w, axis=1) / dT[np.newaxis, :]   # (n_k, n_T-1)
 
-    # Work on interior T points for consistent comparison
+    # Interior T points for consistent comparison
     w_int       = w[:, :-1]
     dw_dk_int   = dw_dk[:, :-1]
     d2w_dk2_int = d2w_dk2[:, :-1]
     k_grid      = log_m_grid[:, np.newaxis]           # (n_k, 1)
 
-    # ── Gatheral g-function ──
+    # Gatheral g-function
     w_safe = np.maximum(w_int, 1e-8)
     h      = dw_dk_int
     hp     = d2w_dk2_int
@@ -75,10 +56,10 @@ def validate_dupire_compatibility(
     term3  = hp / 2.0
     g      = term1 - term2 + term3   # (n_k, n_T-1)
 
-    # ── Dupire local variance ──
+    # Dupire local variance
     local_var = np.where(np.abs(g) > 1e-10, dw_dT / g, np.nan)
 
-    # ── Summary statistics ──
+    # Summary statistics
     g_neg_frac  = float(np.mean(g < 0))
     lv_finite   = local_var[~np.isnan(local_var)]
     lv_neg_frac = float(np.mean(lv_finite < 0)) if len(lv_finite) > 0 else float("nan")
@@ -121,14 +102,9 @@ def plot_dupire_diagnostics(dupire_stats: dict,
                             ttm_grid: np.ndarray,
                             log_m_grid: np.ndarray) -> None:
     """
-    Two-panel heatmap of Dupire derivative-space diagnostics.
-
-    Left  — Gatheral g(k, T):      green = valid density, red = butterfly arb
-    Right — Local variance σ²_loc: green = positive,      red = negative (bad)
-
-    These are the quantities that in-sample repricing validation does NOT
-    test, and are the typical failure mode of surfaces that look smooth in
-    IV space but produce imaginary local vol downstream.
+    Two-panel heatmap: Gatheral g(k,T) (red = butterfly arb) and local
+    variance σ²_loc (red = negative). These derivative-space quantities are
+    not tested by in-sample repricing.
     """
     g         = dupire_stats["g_surface"]          # (n_k, n_T-1)
     local_var = dupire_stats["local_var_surface"]  # (n_k, n_T-1)

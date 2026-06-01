@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Two-stage Bergomi parameter calibration:
-  Stage 1 — variance-of-variance calibration.
-  Stage 2 — skew correlation calibration via (rho1, chi).
-"""
+"""Two-stage Bergomi parameter calibration:
+  Stage 1 — variance-of-variance.
+  Stage 2 — skew correlation via (rho1, chi)."""
 
 import logging
 
@@ -17,16 +15,14 @@ from bergomi_models import vol_of_vol_model, skew_order1_model
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
 # Stage 1: variance-of-variance calibration
-# =============================================================================
 
 def stage1_objective(params, T_grid, target):
     nu, theta, kappa1, kappa2, rho12 = params
-    # Hard constraint: kappa1 > kappa2 (short factor faster). Soft penalty.
+    # kappa1 > kappa2 (short factor faster); soft penalty.
     if kappa1 <= kappa2:
         return 1e6 + (kappa2 - kappa1) ** 2 * 1e3
-    # Validity of normalisation denominator
+    # Normalisation denominator must be valid.
     denom_sq = (1 - theta) ** 2 + theta ** 2 + 2.0 * rho12 * theta * (1 - theta)
     if denom_sq <= 1e-8:
         return 1e6
@@ -58,8 +54,8 @@ def calibrate_stage1(T_grid, target, seed=SEED, maxiter=DE_MAXITER):
     )
     logger.info(f"  DE: fun={de.fun:.6e}, nfev={de.nfev}")
 
-    # L-BFGS-B polish respects bounds (NM does not — it walks flat valleys
-    # of the over-parameterised vol-of-vol surface to nonsensical values).
+    # L-BFGS-B polish respects bounds; NM would walk flat valleys of the
+    # over-parameterised surface to nonsensical values.
     pol = optimize.minimize(
         stage1_objective, de.x, args=(T_grid, target),
         method="L-BFGS-B", bounds=bounds,
@@ -81,9 +77,7 @@ def calibrate_stage1(T_grid, target, seed=SEED, maxiter=DE_MAXITER):
     }
 
 
-# =============================================================================
 # Stage 2: skew correlation calibration via (rho1, chi)
-# =============================================================================
 
 def derive_rho2(rho1, chi, rho12):
     """Wang eq. 4.4: ensures (rho12, rho1, rho2) is a valid correlation matrix."""
@@ -94,7 +88,7 @@ def derive_rho2(rho1, chi, rho12):
 def stage2_objective(params, T_grid, target, stage1):
     rho1, chi = params
     rho2 = derive_rho2(rho1, chi, stage1["rho12"])
-    # Penalty if rho2 strays outside [-0.99, 0.0] (we expect negative for SPX)
+    # Penalise rho2 outside [-0.99, 0.0] (expected negative for SPX).
     pen = 0.0
     if rho2 < -0.99:
         pen += 1e3 * (rho2 + 0.99) ** 2

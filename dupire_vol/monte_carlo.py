@@ -13,34 +13,17 @@ from config import *
 logger = logging.getLogger(__name__)
 
 
-# ===========================================================================
-# SECTION 5: MONTE CARLO REPRICING VALIDATION
-# ===========================================================================
+# SECTION 5: Monte Carlo repricing validation
 
 def build_local_vol_interpolator(
         local_vol: np.ndarray,
         log_m_grid: np.ndarray,
         ttm_grid: np.ndarray):
     """
-    Build a 2D interpolator for σ_loc(k, t).
+    2D interpolator for σ_loc(k, t), evaluated at (log(S_t/F(0,t)), t).
 
-    During MC simulation, we evaluate this at (log(S_t / F(0,t)), t),
-    where F(0,t) is the initial forward curve interpolated at time t.
-    Both arguments are clipped to the grid bounds (nearest-value
-    extrapolation for paths wandering outside the surface).
-
-    Parameters
-    ----------
-    local_vol : np.ndarray, shape (n_k, n_T)
-        Dupire local vol surface (clipped, finite).
-    log_m_grid : np.ndarray
-        k = log(K/F) grid.
-    ttm_grid : np.ndarray
-        TTM grid.
-
-    Returns
-    -------
-    scipy.interpolate.RegularGridInterpolator
+    Args clipped to grid bounds (nearest-value extrapolation off-surface).
+    Returns a RegularGridInterpolator.
     """
     return interpolate.RegularGridInterpolator(
         (log_m_grid, ttm_grid),
@@ -55,18 +38,13 @@ def _bs_price_forward(
         sigma: float, k: float, F: float,
         r: float, T: float, opt_type: str) -> float:
     """
-    Black-76-style forward-log-moneyness BS price.
+    Black-76 forward-log-moneyness BS price, matching `_bsm_iv_from_price`
+    so price↔sigma round-trips.
 
-    Mirrors `_bsm_iv_from_price`'s convention so a price computed here and
-    then inverted there round-trips to the same sigma:
+        K = F·exp(k);  d1 = (−k + σ²T/2)/(σ√T),  d2 = d1 − σ√T
+        Call: e^{−rT}[F·N(d1) − K·N(d2)];  Put via parity.
 
-        K = F·exp(k)
-        d1 = (−k + σ²T/2)/(σ√T),  d2 = d1 − σ√T
-        Call: e^{−rT}·[F·N(d1) − K·N(d2)]
-        Put : e^{−rT}·[K·N(−d2) − F·N(−d1)]
-
-    Used to build the SSVI BS price from the SSVI IV (the `iv` column in
-    spx_iv_data.csv); that price is the comparison target for Dupire MC.
+    Builds the SSVI BS price (from spx_iv_data.csv `iv`), the Dupire MC target.
     """
     if T <= 0 or sigma <= 0:
         K = F * np.exp(k)
@@ -89,24 +67,12 @@ def _bsm_iv_from_price(
         price: float, k: float, F: float,
         r: float, T: float, opt_type: str) -> float:
     """
-    Back out Black-Scholes implied vol from an option price using Brent's method.
+    BS implied vol from price by Brent, forward log-moneyness form
+    (d1 = (−k + σ²T/2)/(σ√T), put via parity).
 
-    Uses the forward log-moneyness form:
-        d1 = (−k + σ²T/2) / (σ√T),   d2 = d1 − σ√T
-        C  = e^{−rT}·[F·N(d1) − K·N(d2)],   P via put-call parity.
-
-    Parameters
-    ----------
-    price    : option price to invert
-    k        : forward log-moneyness  log(K/F)
-    F        : forward price F(0,T)
-    r        : risk-free rate
-    T        : time to maturity
-    opt_type : "call" or "put"
-
-    Returns
-    -------
-    sigma (annualised) or np.nan if inversion fails (e.g. price ≤ intrinsic).
+    price (to invert), k=log(K/F), F=F(0,T), r, T, opt_type "call"/"put".
+    Returns annualised sigma, or np.nan if inversion fails (e.g. price ≤
+    intrinsic).
     """
     K  = F * np.exp(k)
     df = np.exp(-r * T)
@@ -145,74 +111,38 @@ def monte_carlo_reprice(
         n_reprice: int = MC_N_REPRICE,
         seed: int = MC_SEED) -> pd.DataFrame:
     """
-    Validate the Dupire local vol surface by Monte Carlo repricing.
+    Validate the Dupire local vol surface by MC repricing.
 
-    Simulates the risk-neutral SDE (exponential Euler-Maruyama):
+    Exponential Euler-Maruyama under the risk-neutral SDE:
+        S_{t+dt} = S_t·exp[(r − q_eff(t) − ½σ_loc²)dt + σ_loc·√dt·Z]
+    Z~N(0,1); q_eff(t) and F(0,t) linearly interpolated from per-TTM
+    q_eff_grid / fwd_curve (both from put-call parity); σ_loc from the
+    surface at (log(S_t/F(0,t)), t). r − q_eff(t) drift is accurate for SPX
+    (q varies slowly) giving E[S_T] ≈ F(0,T). Agreement with the SSVI BS
+    price (BS at per-option SSVI IV, the ground-truth benchmark) confirms
+    consistency with the IV surface and forward curve.
 
-        S_{t+dt} = S_t · exp[(r − q_eff(t) − ½σ_loc²) dt + σ_loc · √dt · Z]
+    df: option data [strike, ttm, option_type, fwd_log_m, iv, mid].
+    local_vol/log_m_grid/ttm_grid: surface and its k, T axes (filled, no NaN).
+    S spot at t=0, r rate, q scalar or per-TTM (n_T,), fwd_curve [[T,F]] (n_T,2),
+    n_paths/steps_per_year/n_reprice/seed: MC params.
 
-    where Z ~ N(0,1), q_eff(t) is linearly interpolated from the per-TTM
-    q_eff_grid (average effective yields from put-call parity), and
-
-        σ_loc = σ_loc(log(S_t / F(0,t)), t)
-
-    is interpolated from the local vol surface.
-
-    Using r − q_eff(t) as the drift is a good approximation for SPX where
-    q varies slowly across maturities, giving E[S_T] ≈ F(0,T).
-
-    F(0,t) is obtained by linear interpolation of fwd_curve = [[T, F(T)]]
-    from Step 1, which was built from put-call parity.
-
-    Agreement between MC prices and SSVI BS prices confirms that the
-    Dupire surface is consistent with the IV surface and the forward curve.
-    The SSVI BS price is BS(σ_SSVI, …) where σ_SSVI is the per-option
-    SSVI-fitted IV in `spx_iv_data.csv:iv`. The SSVI surface is the ground
-    truth benchmark.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Option data with columns [strike, ttm, option_type, fwd_log_m, iv, mid].
-    local_vol : np.ndarray
-        Dupire local vol surface (k × T grid, filled, no NaN).
-    log_m_grid : np.ndarray
-        k = log(K/F) grid (same grid as local_vol axis 0).
-    ttm_grid : np.ndarray
-        TTM grid (same grid as local_vol axis 1).
-    S : float
-        Spot price at inception (t=0).
-    r : float
-        Risk-free rate.
-    q : float or np.ndarray, shape (n_T,)
-        Dividend yield — scalar or per-TTM array.
-    fwd_curve : np.ndarray, shape (n_T, 2)
-        Forward curve on the TTM grid: [[T_1, F_1], ..., [T_n, F_n]].
-    n_paths, steps_per_year, n_reprice, seed : int
-        MC parameters.
-
-    Returns
-    -------
-    pd.DataFrame
-        Repricing results with columns: strike, ttm, option_type, forward,
-        fwd_log_m, ssvi_price, mc_price, mc_std_err, price_error,
-        price_error_pct, iv_ssvi, iv_mc, iv_error_bps.
+    Returns DataFrame: strike, ttm, option_type, forward, fwd_log_m,
+    ssvi_price, mc_price, mc_std_err, price_error, price_error_pct, iv_ssvi,
+    iv_mc, iv_error_bps.
     """
     from scipy.interpolate import interp1d
 
     rng = np.random.default_rng(seed)
 
-    # Build local vol interpolator
     lv_interp = build_local_vol_interpolator(local_vol, log_m_grid, ttm_grid)
 
-    # Forward curve interpolator: F(0, t) for any simulation time t
+    # F(0, t) for any simulation time t
     fwd_interp = interp1d(fwd_curve[:, 0], fwd_curve[:, 1],
                           kind="linear", fill_value="extrapolate")
 
-    # Per-TTM q interpolator (if array provided).
-    # q_eff_grid[i] is the average effective yield over [0, T_i] from put-call
-    # parity. Using it as an interpolated instantaneous rate is an approximation
-    # that is accurate when q varies slowly (true for SPX), giving E[S_T] ≈ F(0,T).
+    # Per-TTM q interpolator. q_eff_grid[i] is the avg yield over [0,T_i]
+    # (parity); used as an instantaneous rate (good when q varies slowly).
     if isinstance(q, np.ndarray) and q.ndim == 1:
         q_interp_fn = interp1d(ttm_grid, q, kind="linear",
                                fill_value="extrapolate")
@@ -220,7 +150,7 @@ def monte_carlo_reprice(
     else:
         q_is_array = False
 
-    # Select options within grid bounds using forward log-moneyness
+    # Options within grid bounds (forward log-moneyness)
     in_bounds = (
         (df["fwd_log_m"] >= log_m_grid[0]) &
         (df["fwd_log_m"] <= log_m_grid[-1]) &
@@ -237,13 +167,13 @@ def monte_carlo_reprice(
         logger.warning("No options in grid bounds for MC repricing.")
         return pd.DataFrame()
 
-    # ── Simulate paths to T_max ──────────────────────────────────────
+    # Simulate paths to T_max
     T_max   = sample["ttm"].max()
     n_steps = max(int(T_max * steps_per_year), 20)
     dt      = T_max / n_steps
     sqrt_dt = np.sqrt(dt)
 
-    t_schedule = np.arange(n_steps + 1) * dt   # (n_steps + 1,)
+    t_schedule = np.arange(n_steps + 1) * dt
 
     sample["step_idx"] = sample["ttm"].apply(
         lambda T: int(np.argmin(np.abs(t_schedule - T)))
@@ -259,24 +189,20 @@ def monte_carlo_reprice(
     S_t = np.full(n_paths, S, dtype=np.float64)
 
     for step in range(1, n_steps + 1):
-        t = (step - 1) * dt   # time at START of this step
+        t = (step - 1) * dt   # start of step
         if step % 20 == 0:
             logger.info(f"Simulating... ({step/n_steps:.2%} complete)")
 
-
-        # Drift: r - q_eff(t).  q_eff_grid[i] is the average effective yield
-        # over [0, T_i] from put-call parity; using it as an interpolated
-        # instantaneous rate is a good approximation for SPX where q varies slowly.
+        # Drift r - q_eff(t) (see q interpolator note above)
         q_t = float(q_interp_fn(t)) if q_is_array else float(q)
 
-        # Forward log-moneyness for the current paths:
-        # k_t = log(S_t / F(0, t)) — consistent with the surface parameterisation
+        # k_t = log(S_t/F(0,t)), matching the surface parameterisation
         F_0_t = float(fwd_interp(t))
-        F_0_t = max(F_0_t, 1e-6)   # safety floor
+        F_0_t = max(F_0_t, 1e-6)
         log_m_t = np.log(np.maximum(S_t, 1e-6) / F_0_t)
         log_m_clipped = np.clip(log_m_t, log_m_grid[0], log_m_grid[-1])
-        # Allow t < ttm_grid[0]: the interpolator extrapolates linearly,
-        # giving a smooth local vol for early steps rather than freezing at T_min.
+        # Allow t < ttm_grid[0]: linear extrapolation keeps early steps
+        # smooth instead of freezing at T_min.
         t_clipped = np.clip(t, 0.0, ttm_grid[-1])
 
         pts = np.column_stack([log_m_clipped, np.full(n_paths, t_clipped)])
@@ -293,7 +219,7 @@ def monte_carlo_reprice(
 
     logger.info("  Simulation complete. Computing payoffs...")
 
-    # ── Reprice each option ──────────────────────────────────────────
+    # Reprice each option
     records = []
     for _, row in sample.iterrows():
         K        = row["strike"]
@@ -302,12 +228,11 @@ def monte_carlo_reprice(
         fwd_k    = row["fwd_log_m"]
         step_idx = row["step_idx"]
 
-        # Forward price for this option's expiry
+        # Forward for this expiry
         F_T = float(fwd_interp(T))
 
-        # SSVI ground truth: per-option SSVI-fitted IV (spx_iv_data.csv:iv) →
-        # BS price under the same forward-log-moneyness convention used to
-        # invert MC prices.
+        # SSVI ground truth: per-option SSVI IV -> BS price (same convention
+        # used to invert MC prices)
         iv_ssvi = float(row["iv"])
         ssvi_price = _bs_price_forward(iv_ssvi, fwd_k, F_T, r, T, opt_type)
 
@@ -344,9 +269,7 @@ def monte_carlo_reprice(
 
     result_df = pd.DataFrame(records)
 
-    # ── Report ──────────────────────────────────────────────────────
-    # Liquidity filter uses the SSVI BS price as the size proxy with a $10
-    # dollar threshold.
+    # Report. Liquidity proxy = SSVI BS price >= $10.
     liquid = result_df[result_df["ssvi_price"] >= 10.0]
 
     logger.info("\n" + "=" * 60)

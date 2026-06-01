@@ -12,9 +12,7 @@ from black_scholes import bs_price
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# SECTION 6 — VALIDATION
-# =============================================================================
+# Section 6 — Validation
 
 def validate_surface(df: pd.DataFrame,
                      fwd_df: pd.DataFrame,
@@ -27,14 +25,9 @@ def validate_surface(df: pd.DataFrame,
     """
     Validate the surface by repricing a random sample of market options.
 
-    Computes:
-      - IV absolute error: |iv_interpolated − iv_computed|
-      - Price error: (BSM_repriced − market_mid) / market_mid × 100%
-
-    METHODOLOGY: We interpolate the surface at the option's forward log-
-    moneyness k = ln(K/F(T)) using RegularGridInterpolator on (log_m_grid,
-    ttm_grid).  Then reprice via BSM with the interpolated IV and the
-    option's per-expiry q_eff.
+    Interpolate the surface at k = ln(K/F(T)) (RegularGridInterpolator on
+    log_m_grid, ttm_grid), reprice via BSM with interpolated IV and per-expiry
+    q_eff. Reports IV abs error and price error (% of market mid).
     """
     fwd_map = dict(zip(fwd_df["expiry"], fwd_df["forward"]))
     q_eff_map = dict(zip(fwd_df["expiry"], fwd_df["q_eff"]))

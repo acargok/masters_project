@@ -115,7 +115,7 @@ def _has_heston(data):
     return "heston_options" in data["results"] and len(data["results"]["heston_options"]) > 0
 
 
-# ── Tab 1: Summary Table ─────────────────────────────────────────────────────
+# Tab 1: Summary Table
 
 def make_summary_table(data):
     """Comparison table: Heston LSV vs Bergomi LSV vs baselines."""
@@ -181,7 +181,7 @@ def make_summary_table(data):
     return fig
 
 
-# ── Tab 2: Model Comparison Bar Chart ────────────────────────────────────────
+# Tab 2: Model Comparison Bar Chart
 
 def make_price_comparison_bars(data):
     """Grouped bar chart: 4 models x 3 options."""
@@ -267,7 +267,7 @@ def make_price_comparison_bars(data):
     return fig
 
 
-# ── Tab 3: Payoff Distribution Comparison ────────────────────────────────────
+# Tab 3: Payoff Distribution Comparison
 
 def make_payoff_comparison(data):
     """Overlaid histograms: Heston vs Bergomi payoffs per option."""
@@ -319,7 +319,7 @@ def make_payoff_comparison(data):
     return fig
 
 
-# ── Tab 4: Return Distribution Comparison ────────────────────────────────────
+# Tab 4: Return Distribution Comparison
 
 def make_return_comparison(data):
     """Side-by-side box plots: Heston vs Bergomi per-reset returns."""
@@ -374,7 +374,7 @@ def make_return_comparison(data):
     return fig
 
 
-# ── Tab 5: Rainbow Paths Comparison ──────────────────────────────────────────
+# Tab 5: Rainbow Paths Comparison
 
 def make_rainbow_comparison(data, n_light=100):
     """Side-by-side rainbow paths: Heston vs Bergomi."""
@@ -449,7 +449,7 @@ def make_rainbow_comparison(data, n_light=100):
     return fig
 
 
-# ── Tab 6: Variance Path Comparison ──────────────────────────────────────────
+# Tab 6: Variance Path Comparison
 
 def make_variance_comparison(data, n_show=30):
     """Side-by-side variance paths: Heston vs Bergomi."""
@@ -502,7 +502,7 @@ def make_variance_comparison(data, n_show=30):
     return fig
 
 
-# ── Tab 7: Convergence ───────────────────────────────────────────────────────
+# Tab 7: Convergence
 
 def make_convergence(data):
     """Price convergence for both models."""
@@ -565,7 +565,7 @@ def make_convergence(data):
     return fig
 
 
-# ── Tab 8: Payoff Distributions (Heston only) ────────────────────────────────
+# Tab 8: Payoff Distributions (Heston only)
 
 def make_payoff_distributions(data):
     """Histogram of per-path payoffs for each option (Heston LSV)."""
@@ -613,7 +613,7 @@ def make_payoff_distributions(data):
     return fig
 
 
-# ── Tab 9: Per-Reset Return Distributions (Heston) ───────────────────────────
+# Tab 9: Per-Reset Return Distributions (Heston)
 
 def make_reset_return_distributions(data):
     """Box plots of per-reset returns (Heston LSV)."""
@@ -657,7 +657,7 @@ def make_reset_return_distributions(data):
     return fig
 
 
-# ── Tab 10: Sample Path Walkthroughs ─────────────────────────────────────────
+# Tab 10: Sample Path Walkthroughs
 
 def make_sample_path_walkthrough(data, name, n_show=5):
     """Walkthrough of sample paths for one option."""
@@ -764,7 +764,7 @@ def make_sample_path_walkthrough(data, name, n_show=5):
     return fig
 
 
-# ── Tab 11: Napoleon Worst-Reset Analysis ────────────────────────────────────
+# Tab 11: Napoleon Worst-Reset Analysis
 
 def make_napoleon_worst_reset(data):
     """Which reset period has the worst return for Napoleon."""
@@ -833,7 +833,7 @@ def make_napoleon_worst_reset(data):
     return fig
 
 
-# ── Tab 12: Reverse Cliquet Coupon Consumption ───────────────────────────────
+# Tab 12: Reverse Cliquet Coupon Consumption
 
 def make_reverse_consumption(data):
     """Coupon consumption analysis for reverse cliquet."""
@@ -901,7 +901,7 @@ def make_reverse_consumption(data):
     return fig
 
 
-# ── Tab 13: Terminal Spot & Variance Distributions ───────────────────────────
+# Tab 13: Terminal Spot & Variance Distributions
 
 def make_terminal_distributions(data):
     """Compare terminal spot and variance distributions."""
@@ -953,7 +953,7 @@ def make_terminal_distributions(data):
     return fig
 
 
-# ── HTML Assembly ─────────────────────────────────────────────────────────────
+# HTML Assembly
 
 TAB_DESCRIPTIONS = {
     "Summary": (

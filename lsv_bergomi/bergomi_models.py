@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Bergomi vol-of-vol and skew formulas (flat forward variance approximation)
-plus benchmarks, for the two-stage parameter calibration.
-"""
+"""Bergomi vol-of-vol/skew formulas (flat forward-variance approximation) and
+benchmarks, for the two-stage parameter calibration."""
 
 import numpy as np
 from scipy import interpolate
@@ -12,10 +10,6 @@ from bergomi_param_config import (
     DEFAULT_SIGMA0, DEFAULT_TAU0, DEFAULT_ALPHA, SKEW_DELTA_K,
 )
 
-
-# =============================================================================
-# Bergomi vol-of-vol and skew formulas (flat forward variance approximation)
-# =============================================================================
 
 def alpha_theta(theta, rho12):
     """Wang eq. 3.10 normalisation."""
@@ -63,9 +57,7 @@ def skew_order1_model(T, nu, theta, kappa1, kappa2, rho12, rho1, rho2):
     return nu * a_th * (term1 + term2)
 
 
-# =============================================================================
 # Benchmarks
-# =============================================================================
 
 def vol_of_vol_benchmark(T, sigma0=DEFAULT_SIGMA0, tau0=DEFAULT_TAU0,
                           alpha=DEFAULT_ALPHA):
@@ -75,14 +67,9 @@ def vol_of_vol_benchmark(T, sigma0=DEFAULT_SIGMA0, tau0=DEFAULT_TAU0,
 
 def empirical_atmf_skew(iv_surface, log_m_grid, ttm_grid, T_query,
                          delta=SKEW_DELTA_K):
-    """
-    Empirical ATMF skew at maturities T_query, computed from the SSVI surface.
-
-    skew(T) = (sigma(F*(1+delta), T) - sigma(F*(1-delta), T)) / (2*delta).
-
-    Uses log-moneyness coordinates k = log(K/F): k_+ = log(1+delta),
-    k_- = log(1-delta). Bilinear interpolation in (k, T).
-    """
+    """Empirical ATMF skew at T_query from the SSVI surface:
+    skew(T) = (sigma(F(1+delta),T) - sigma(F(1-delta),T)) / (2*delta),
+    via bilinear interpolation in log-moneyness k=log(K/F) and T."""
     interp = interpolate.RegularGridInterpolator(
         (log_m_grid, ttm_grid), iv_surface,
         method="linear", bounds_error=False, fill_value=None,

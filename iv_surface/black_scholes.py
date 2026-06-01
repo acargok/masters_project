@@ -8,20 +8,13 @@ from scipy.stats import norm
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# SECTION 3 — BLACK-SCHOLES AND IMPLIED VOLATILITY
-# =============================================================================
+# Section 3 — Black-Scholes and implied volatility
 
 def bs_price(S: float, K: float, T: float, r: float, q: float,
              sigma: float, option_type: str) -> float:
     """
     BSM price for a European option on a dividend-paying underlying.
-
-      d1 = [ln(S/K) + (r − q + σ²/2)T] / (σ√T)
-      d2 = d1 − σ√T
-      Call: S·e^{-qT}·N(d1) − K·e^{-rT}·N(d2)
-      Put:  K·e^{-rT}·N(−d2) − S·e^{-qT}·N(−d1)
-
+    d1 = [ln(S/K) + (r−q+σ²/2)T]/(σ√T), d2 = d1−σ√T.
     Returns intrinsic value if T ≤ 0 or sigma ≤ 0.
     """
     if T <= 0 or sigma <= 0:
@@ -49,15 +42,9 @@ def implied_vol_single(market_price: float, S: float, K: float, T: float,
                        r: float, q: float, option_type: str,
                        tol: float = 1e-6, max_iter: int = 100) -> float:
     """
-    Implied vol via hybrid Newton-Raphson → Brent bisection.
-
-    METHODOLOGY:
-      1. Newton-Raphson with σ₀=0.25, clipped to [1e-6, 5.0].
-         Quadratic convergence near the root; fast when vega > 0.
-      2. Brent bisection on [1e-6, 5.0] as fallback (guaranteed convergence).
-
-    Returns np.nan if the market price is at or below intrinsic, or if
-    both methods fail to converge.
+    Implied vol via Newton-Raphson (σ₀=0.25, clipped to [1e-6, 5.0]) with
+    Brent bisection on [1e-6, 5.0] as guaranteed-convergence fallback.
+    Returns np.nan if price ≤ intrinsic or both methods fail.
     """
     disc_S = S * np.exp(-q * T)
     disc_K = K * np.exp(-r * T)

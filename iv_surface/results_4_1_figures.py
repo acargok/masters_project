@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-results_4_1_figures.py — thesis §4.1 (Surface Fitting) figure pack
-====================================================================
-Stand-alone script. Reads cached pipeline artefacts from
-    iv_surface/data/, iv_surface/arrays/
-    dupire_vol/data/, dupire_vol/arrays/
-and writes thesis-ready matplotlib figures + one LaTeX table to
-    iv_surface/results_4.1_plots/
-
-Every multi-panel figure is emitted as one PNG per panel — except the
-SSVI fit grid, which is a single 3×4 image by design. Sub-panel filenames
-match the section structure; see `main()` for the list.
+Thesis §4.1 (Surface Fitting) figure pack. Stand-alone: reads cached
+artefacts from iv_surface/{data,arrays} and dupire_vol/{data,arrays} and
+writes thesis-ready figures + LaTeX tables to iv_surface/results_4.1_plots/.
+Multi-panel figures are emitted one PNG per panel (except the SSVI fit grid);
+see main() for the list.
 """
 import json
 import os
@@ -26,7 +20,7 @@ from matplotlib import cm
 
 warnings.filterwarnings("ignore")
 
-# ───────────────────────── Paths ─────────────────────────
+# Paths
 HERE       = Path(__file__).resolve().parent          # iv_surface/
 ROOT       = HERE.parent
 IV_DIR     = HERE
@@ -34,7 +28,7 @@ DUPIRE_DIR = ROOT / "dupire_vol"
 OUT_DIR    = HERE / "results_4.1_plots"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ───────────────────────── Style ─────────────────────────
+# Style
 mpl.rcParams.update({
     "font.family":      "serif",
     "font.size":         10,
@@ -51,16 +45,15 @@ mpl.rcParams.update({
 
 LIQUID_MIN_PRICE = 10.0    # liquidity threshold reused across the pipeline
 
-# Shared layout for the two §4.1.1 (k, T) overview figures so their data
-# canvas and image dimensions are identical. The bubble figure's colourbar
-# slot is rendered invisible while still consuming the same horizontal
-# real-estate as the real colourbar on the market-IV-smiles figure.
+# Shared layout for the two §4.1.1 (k,T) overview figures so their data canvas
+# and image dimensions match (the bubble figure's colourbar slot is invisible
+# but consumes the same width as the market-IV-smiles colourbar).
 _SMILE_BUBBLE_FIGSIZE = (7.5, 4.8)
 _CBAR_SIZE            = "3%"
 _CBAR_PAD             = 0.10
 
 
-# ─────────────────────── SSVI math ───────────────────────
+# SSVI math
 def ssvi_w(k: np.ndarray, theta: float, phi: float, rho: float) -> np.ndarray:
     """w(k; θ, φ, ρ) = (θ/2)[1 + ρφk + √((φk+ρ)² + 1 − ρ²)]."""
     fk = phi * k
@@ -72,17 +65,13 @@ def ssvi_rho_t(t: np.ndarray, p0: float, p1: float, p2: float) -> np.ndarray:
     return np.clip(np.arctan(p0 * t + p1) + p2, -0.999, 0.999)
 
 
-# ─────────────────────────── Data ──────────────────────────
+# Data
 def _maybe_load(path: Path):
     return np.load(path) if path.exists() else None
 
 
 def load_data() -> dict:
-    """One-shot load of every artefact §4.1 needs.
-
-    Adds `fwd_log_m` and `total_var` to the iv frame on the fly when those
-    columns are missing on disk.
-    """
+    """Load every artefact §4.1 needs; derives fwd_log_m/total_var if absent."""
     d = {}
     d["iv_df"]   = pd.read_csv(IV_DIR / "data" / "spx_iv_data.csv")
     d["ssvi_df"] = (pd.read_csv(IV_DIR / "data" / "ssvi_params.csv")
@@ -90,7 +79,7 @@ def load_data() -> dict:
     d["val_df"]  = pd.read_csv(IV_DIR / "data" / "validation_results.csv")
     d["fwd_df"]  = pd.read_csv(IV_DIR / "data" / "implied_forwards.csv")
 
-    # Derive these columns when absent on disk.
+    # Derive columns absent on disk
     iv = d["iv_df"]
     if "fwd_log_m" not in iv.columns:
         fwd_map = dict(zip(d["fwd_df"]["expiry"], d["fwd_df"]["forward"]))
@@ -107,9 +96,8 @@ def load_data() -> dict:
     d["ttm_grid"]   = np.load(arr_iv / "ttm_grid.npy")
     d["g_surface"]  = _maybe_load(arr_iv / "dupire_g_surface.npy")
 
-    # Diagnostic — the SSVI fit grid crashes when these two files disagree on
-    # expiries (zero-size-array .min()). Surface that loudly here so the user
-    # immediately knows whether to refresh the data.
+    # Warn loudly if ssvi/iv expiries disagree (the fit grid would .min() an
+    # empty array); tells the user to refresh the data.
     ssvi_exps = set(d["ssvi_df"]["expiry"].unique())
     iv_exps   = set(d["iv_df"]["expiry"].unique())
     inter     = ssvi_exps & iv_exps
@@ -135,11 +123,8 @@ def load_data() -> dict:
 
 
 def _save(fig, name: str, tight: bool = True) -> Path:
-    """Save and close a figure, returning the output path.
-
-    `tight=False` honours the figure's figsize exactly (bbox_inches=None) so
-    paired figures with different right-edge artefacts (colourbar vs hidden
-    colourbar slot) come out at identical pixel dimensions."""
+    """Save and close a figure, returning its path. tight=False keeps figsize
+    exact (bbox_inches=None) so paired figures match pixel dimensions."""
     out = OUT_DIR / name
     if tight:
         fig.savefig(out)
@@ -149,22 +134,18 @@ def _save(fig, name: str, tight: bool = True) -> Path:
     return out
 
 
-# ════════════════════════ Figures ═════════════════════════
+# Figures
 
-# ─── §4.1.1  SSVI fit grid  (the one multi-panel kept whole) ─
+# §4.1.1  SSVI fit grid (the one multi-panel kept whole)
 def fig_ssvi_fit_grid(d: dict) -> Path:
-    """SSVI fit per expiry — 2 rows × 3 cols = 6 panels.
-
-    Per panel: market total variance (dots) vs the SSVI w-curve over the slice's
-    k-range. Slice selection: every third slice along the maturity axis — with
-    18 fitted slices that gives a roughly uniform sweep from shortest to longest
-    expiry, in chronological order. If the iv frame has no rows for a selected
-    expiry the panel is hidden (and counted) rather than crashing.
+    """SSVI fit per expiry, 2×3 panels: market total variance (dots) vs SSVI
+    w-curve. Every third slice along T (≈uniform sweep); panels with no iv
+    rows are hidden.
     """
     ssvi = d["ssvi_df"].sort_values("ttm").reset_index(drop=True)
     iv   = d["iv_df"]
 
-    # Every third slice along T — 0, 3, 6, …, capped to 6 panels.
+    # Every third slice along T, capped to 6 panels
     idxs = list(range(0, len(ssvi), 3))[:6]
     sub  = ssvi.iloc[idxs].reset_index(drop=True)
 
@@ -184,11 +165,9 @@ def fig_ssvi_fit_grid(d: dict) -> Path:
         theta, phi, rho = float(row["theta"]), float(row["phi"]), float(row["rho"])
         rmse   = float(row["rmse"])
 
-        # Explorer's exact filter + columns.
         sl = iv[iv["expiry"] == expiry].sort_values("fwd_log_m")
         if len(sl) == 0:
-            # No iv rows for this expiry — hide the panel rather than render
-            # an empty plot or crash on .min() of an empty array.
+            # No iv rows — hide the panel (avoids .min() on empty array)
             ax.set_visible(False)
             n_missing += 1
             continue
@@ -199,7 +178,7 @@ def fig_ssvi_fit_grid(d: dict) -> Path:
         k_range = np.linspace(k_min, k_max, 200)
         w_model = ssvi_w(k_range, theta, phi, rho)
 
-        # zorder: market dots BELOW the SSVI curve so the fit is visually on top.
+        # market dots below the SSVI curve (fit on top)
         ax.scatter(k_data, w_data, s=6, color="black", alpha=0.7, zorder=2)
         ax.plot(k_range, w_model, color="crimson", lw=1.6, zorder=3)
 
@@ -225,32 +204,20 @@ def fig_ssvi_fit_grid(d: dict) -> Path:
     return _save(fig, "ssvi_fit_grid.png")
 
 
-# ─── §4.1.1  SSVI parameter + metrics table ────────────────
+# §4.1.1  SSVI parameter + metrics table
 def fig_ssvi_params_table(d: dict) -> Path:
-    """LaTeX table: shared SSVI parameters, fit dataset size, and the
-    validation diagnostics from the random repricing sample.
-
-    Quantities reported:
-      • Shared SSVI parameters $\\eta, \\gamma, p_0, p_1, p_2$.
-      • $n_\\mathrm{slices}$ — number of expiries fitted jointly.
-      • $n_\\mathrm{obs}$    — total options the SSVI was fit to (the sum
-        of `ssvi_params.csv:n_options`, which equals the surviving-cleanup
-        option count in `spx_iv_data.csv`). This is the headline data size,
-        NOT the validation subsample.
-      • Validation metrics (IV MAE / RMSE / max abs in bp) — computed on
-        the random sample saved to `validation_results.csv`. The sample
-        size $n_\\mathrm{val}$ is reported separately so it isn't confused
-        with $n_\\mathrm{obs}$.
+    """LaTeX table: shared SSVI params, fit size, and validation metrics.
+    n_obs = sum of per-slice n_options (post-cleanup count, not the
+    validation subsample n_val); IV MAE/RMSE/max abs (bp) from the random
+    repricing sample.
     """
     row0 = d["ssvi_df"].iloc[0]
     val  = d["val_df"]
     eta, gamma = float(row0["eta"]),   float(row0["gamma"])
     p0, p1, p2 = float(row0["p0"]),    float(row0["p1"]),    float(row0["p2"])
 
-    # Fit-level dataset size: `ssvi_params.csv:n_options` records how many
-    # options went into each expiry slice's contribution to the joint fit.
-    # Summing across slices gives the total count post-cleanup. Falls back
-    # to len(spx_iv_data.csv) if n_options is unavailable.
+    # Fit-level dataset size: sum of per-slice n_options (post-cleanup);
+    # fall back to len(spx_iv_data.csv) if n_options is absent.
     ssvi_df = d["ssvi_df"]
     if "n_options" in ssvi_df.columns:
         n_obs = int(ssvi_df["n_options"].sum())
@@ -258,7 +225,7 @@ def fig_ssvi_params_table(d: dict) -> Path:
         n_obs = int(len(d["iv_df"]))
     n_slices = int(len(ssvi_df))
 
-    # Validation-level diagnostics: computed on the repricing sample.
+    # Validation diagnostics on the repricing sample
     iv_err_bps  = (val["iv_interpolated"] - val["iv_computed"]).abs() * 1e4
     iv_mae      = float(iv_err_bps.mean())
     iv_rmse     = float(np.sqrt((iv_err_bps ** 2).mean()))
@@ -305,14 +272,11 @@ def fig_ssvi_params_table(d: dict) -> Path:
     return out
 
 
-# ─── Appendix: SSVI parameters — shared block + per-slice  ──
+# Appendix: SSVI parameters — shared block + per-slice
 def fig_ssvi_params_table_full(d: dict) -> Path:
-    """LaTeX table for the appendix: shared SSVI parameters above (η, γ,
-    p₀, p₁, p₂) and the per-slice block below (one row per expiry with
-    θ(T_i), φ(T_i), ρ(T_i), per-slice RMSE in vp, and the option count).
-
-    Two stacked tabulars inside a single table environment so both blocks
-    sit under one caption / label in the appendix."""
+    """Appendix LaTeX table: shared params (η,γ,p₀,p₁,p₂) above, per-slice
+    block (θ,φ,ρ,RMSE vp,n_options per expiry) below, as two stacked
+    tabulars under one caption."""
     row0 = d["ssvi_df"].iloc[0]
     eta, gamma   = float(row0["eta"]),   float(row0["gamma"])
     p0, p1, p2   = float(row0["p0"]),    float(row0["p1"]),    float(row0["p2"])
@@ -341,7 +305,7 @@ def fig_ssvi_params_table_full(d: dict) -> Path:
         r"vol points (vp) and the option count used in that slice's "
         r"contribution to the joint fit.}",
         r"\label{tab:ssvi_params_full}",
-        # ── Shared block ──
+        # Shared block
         r"\begin{tabular}{l l c}",
         r"\toprule",
         r"\textbf{Symbol} & \textbf{Parameter} & \textbf{Value} \\",
@@ -355,7 +319,7 @@ def fig_ssvi_params_table_full(d: dict) -> Path:
         r"",
         r"\vspace{1em}",
         r"",
-        # ── Per-slice block ──
+        # Per-slice block
         r"\begin{tabular}{lccccrr}",
         r"\toprule",
         r"\textbf{Expiry} & $T_i$ (yr) & $\theta(T_i)$ & $\varphi(T_i)$ & "
@@ -382,15 +346,13 @@ def fig_ssvi_params_table_full(d: dict) -> Path:
     return out
 
 
-# ─── §4.1.1  Two separate 3D surface figures ───────────────
+# §4.1.1  Two separate 3D surface figures
 def fig_iv_surface_3d(d: dict) -> Path:
     """Fitted IV surface σ(k, T) — 3D plot."""
     log_m = d["log_m_grid"]; ttm = d["ttm_grid"]; iv = d["iv_surface"]
     K_mesh, T_mesh = np.meshgrid(log_m, ttm, indexing="ij")
 
-    # Match `fig_dupire_local_vol_3d`'s sizing exactly: 9×6 with colorbar
-    # `pad=0.12` so the colorbar sits clear of the z-axis label region;
-    # x/y/z labels all 12pt with `labelpad=10`.
+    # Sizing matched to fig_dupire_local_vol_3d (colorbar pad clears z-label)
     fig = plt.figure(figsize=(9.0, 6.0))
     ax  = fig.add_subplot(111, projection="3d")
     surf = ax.plot_surface(K_mesh, T_mesh, iv, cmap=cm.viridis,
@@ -431,18 +393,11 @@ def fig_tv_surface_with_slices_3d(d: dict) -> Path:
     return _save(fig, "ssvi_tv_surface_with_slices_3d.png")
 
 
-# ─── §4.1.1  Term structure — single plot, three axes ────
+# §4.1.1  Term structure — single plot, three axes
 def fig_term_structure(d: dict) -> Path:
-    """ρ(T), θ(T), φ(T) on a single plot with a shared T axis.
-
-    - Left   axis (C0): ρ(T) — parametric curve plus per-slice dots.
-    - Right  axis (C1): θ(T) — per-slice line.
-    - Outer  axis (C2): φ(T) — parametric curve plus per-slice dots.
-
-    φ is shared across slices via the SSVI power-law φ(θ) = η · θ^(-γ); the
-    per-slice φ_i values are extracted from each slice's fit and so may sit
-    very slightly off the parametric curve when the joint optimiser hits
-    bounds. Both are drawn for consistency with how ρ is plotted.
+    """ρ(T), θ(T), φ(T) on shared T axis: ρ (C0, parametric + dots),
+    θ (C1, per-slice line), φ (C2, parametric + dots). φ(θ)=η·θ^(-γ);
+    per-slice φ_i may sit slightly off the curve at optimiser bounds.
     """
     ssvi  = d["ssvi_df"]
     row0  = ssvi.iloc[0]
@@ -456,12 +411,11 @@ def fig_term_structure(d: dict) -> Path:
     T_fine    = np.linspace(T_pts.min(), T_pts.max(), 240)
     rho_fine  = ssvi_rho_t(T_fine, p0, p1, p2)
 
-    # φ(θ) = η · θ^(-γ). Use the parametric θ-curve derived from per-slice θs
-    # by interpolation, then map θ → φ via the shared (η, γ).
+    # φ(θ)=η·θ^(-γ): interpolate θ over T, then map θ→φ via shared (η,γ)
     theta_interp = np.interp(T_fine, T_pts, theta_pts)
     phi_fine     = eta * theta_interp ** (-gamma)
 
-    # 9.8×5.0 leaves room for the third (offset) axis on the right.
+    # Wide figure leaves room for the third (offset) right axis
     fig, ax_rho = plt.subplots(figsize=(9.8, 5.0))
     ax_th  = ax_rho.twinx()
     ax_phi = ax_rho.twinx()
@@ -509,10 +463,9 @@ def fig_term_structure(d: dict) -> Path:
     return _save(fig, "term_structure.png")
 
 
-# ─── §4.1.2  SSVI repricing — three separate figures ───────
-# All three panels work directly off validation_results.csv (the histogram +
-# price scatter), with one join to implied_forwards.csv to derive log-moneyness
-# for the moneyness scatter. Errors are reported in basis points (bp = 1e4·Δσ).
+# §4.1.2  SSVI repricing — three separate figures
+# From validation_results.csv (one join to implied_forwards.csv for the
+# moneyness scatter). Errors in basis points (bp = 1e4·Δσ).
 
 def _val_prepared(d: dict) -> pd.DataFrame:
     val = d["val_df"].copy()
@@ -547,11 +500,8 @@ def fig_ssvi_repricing_iv_scatter(d: dict) -> Path:
     return _save(fig, "ssvi_repricing_iv_scatter.png")
 
 
-# Three SSVI-repricing diagnostics that share a common visual contract:
-#   • identical figsize and explicit square axes box (set_box_aspect(1))
-#     so the plotting area is the same square shape across the trio
-#   • no titles
-#   • calls = blue circles, puts = red circles, both small and translucent
+# Shared visual contract for the SSVI-repricing trio: same figsize, square
+# axes box (set_box_aspect(1)), no titles, calls=blue / puts=red circles.
 _REPR_FIGSIZE   = (4.5, 4.5)
 _REPR_SCATTER_S = 5
 _CALL_COLOR     = "tab:blue"
@@ -611,12 +561,7 @@ def fig_ssvi_repricing_error_vs_price(d: dict) -> Path:
 
 def fig_ssvi_repricing_error_vs_moneyness(d: dict) -> Path:
     """Signed IV error (bp) vs forward log-moneyness k, calls vs puts.
-
-    `validation_results.csv` lacks ttm/forward, so we merge with
-    `implied_forwards.csv` on `expiry` to recover the per-expiry forward,
-    then compute k = ln(K / F). This is the only data join in the SSVI
-    repricing trio; the histogram and the price plot work directly off
-    validation_results.csv columns.
+    Merges implied_forwards.csv on expiry to recover F, then k = ln(K/F).
     """
     val = _val_prepared(d).merge(
         d["fwd_df"][["expiry", "forward"]], on="expiry", how="left",
@@ -644,7 +589,7 @@ def fig_ssvi_repricing_error_vs_moneyness(d: dict) -> Path:
     return _save(fig, "ssvi_repricing_error_vs_moneyness.png")
 
 
-# ─── §4.1.3  Gatheral g(k, T) heatmap ──────────────────────
+# §4.1.3  Gatheral g(k, T) heatmap
 def fig_gatheral_g(d: dict):
     g = d.get("g_surface")
     if g is None:
@@ -665,15 +610,12 @@ def fig_gatheral_g(d: dict):
     return _save(fig, "arbitrage_g.png")
 
 
-# ─── §4.1.4  Dupire local-vol — single 3D + heatmap ────────
+# §4.1.4  Dupire local-vol — single 3D + heatmap
 def fig_dupire_local_vol_3d(d: dict) -> Path:
     lv = d["local_vol"]; log_m = d["log_m_grid"]; ttm = d["ttm_grid"]
     K_mesh, T_mesh = np.meshgrid(log_m, ttm, indexing="ij")
 
-    # Pad the figure on the right so the colorbar (which sits to the right of
-    # the 3D axes) does not crowd the z-axis label region. `pad=0.12` on the
-    # colorbar plus a slightly larger z-label labelpad keeps σ_loc clear of
-    # the colorbar's tick labels.
+    # Right-pad so the colorbar clears the z-axis label region
     fig = plt.figure(figsize=(9.0, 6.0))
     ax  = fig.add_subplot(111, projection="3d")
     surf = ax.plot_surface(K_mesh, T_mesh, lv, cmap=cm.viridis,

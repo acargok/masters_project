@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Dupire Explorer — Interactive Plotly Dashboard
-===============================================
-Single HTML file with tabbed plots for exploring the Dupire local volatility
-surface and MC repricing results. Reuses pre-computed data from dupire_local_vol.py
-and iv_surface/ outputs.
+Dupire Explorer — interactive Plotly dashboard.
 
-Usage:
-    python dupire_explorer.py
-
-Output:
-    plots/dupire_explorer.html — open in any browser, switch between tabs
+Single tabbed HTML for exploring the Dupire local vol surface and MC
+repricing, from dupire_local_vol.py + iv_surface/ outputs.
+Run `python dupire_explorer.py` -> plots/dupire_explorer.html.
 """
 
 import json
@@ -24,19 +18,19 @@ from plotly.subplots import make_subplots
 from scipy.interpolate import RegularGridInterpolator
 from scipy.stats import norm
 
-# Directories (relative to project root, matching dupire_local_vol.py)
+# Directories (project root, matching dupire_local_vol.py)
 DIR_DATA   = "dupire_vol/data"
 DIR_PLOTS  = "dupire_vol/plots"
 DIR_ARRAYS = "dupire_vol/arrays"
 IV_DIR_ARRAYS = "iv_surface/arrays"
 IV_DIR_DATA   = "iv_surface/data"
 
-# 4-category colour scheme (matches dupire_local_vol.py)
+# 4-category colours (matches dupire_local_vol.py)
 CAT_COLORS = {
-    "OTM Call": "#1f77b4",   # dark blue
-    "ITM Call": "#7fbfff",   # light blue
-    "OTM Put":  "#d62728",   # dark red
-    "ITM Put":  "#ff9896",   # salmon
+    "OTM Call": "#1f77b4",
+    "ITM Call": "#7fbfff",
+    "OTM Put":  "#d62728",
+    "ITM Put":  "#ff9896",
 }
 CAT_SYMBOLS = {
     "OTM Call": "circle",
@@ -47,8 +41,7 @@ CAT_SYMBOLS = {
 
 
 def load_data():
-    """Load all pre-computed data from both pipelines."""
-    # Dupire outputs
+    """Load pre-computed data from both pipelines."""
     local_vol = np.load(os.path.join(DIR_ARRAYS, "local_vol_surface.npy"))
     mask = np.load(os.path.join(DIR_ARRAYS, "local_vol_mask.npy"))
 
@@ -57,7 +50,6 @@ def load_data():
 
     repricing = pd.read_csv(os.path.join(DIR_DATA, "repricing_errors.csv"))
 
-    # iv_surface/ outputs
     iv_surface = np.load(os.path.join(IV_DIR_ARRAYS, "iv_surface.npy"))
     log_m_grid = np.load(os.path.join(IV_DIR_ARRAYS, "log_m_grid.npy"))
     ttm_grid = np.load(os.path.join(IV_DIR_ARRAYS, "ttm_grid.npy"))
@@ -67,10 +59,10 @@ def load_data():
 
 
 def classify_options(df):
-    """Classify into OTM Call, ITM Call, OTM Put, ITM Put using forward log-moneyness."""
+    """Classify into OTM/ITM Call/Put by k = log(K/F)."""
     cat = pd.Series("", index=df.index)
     is_call = df["option_type"] == "call"
-    # k = log(K/F): k >= 0 means K >= F, so call is OTM; put is ITM
+    # k >= 0 (K >= F): call OTM, put ITM
     is_otm = ((is_call) & (df["fwd_log_m"] >= 0.0)) | ((~is_call) & (df["fwd_log_m"] < 0.0))
     cat[is_call & is_otm]  = "OTM Call"
     cat[is_call & ~is_otm] = "ITM Call"
@@ -81,7 +73,7 @@ def classify_options(df):
 
 def _add_cat_traces(fig, df, x_col, y_col, customdata_cols=None,
                     hovertemplate=None, row=None, col=None, size=5, opacity=0.6):
-    """Add one scatter trace per category to a figure."""
+    """Add one scatter trace per category."""
     cats = classify_options(df)
     for label in ["OTM Call", "ITM Call", "OTM Put", "ITM Put"]:
         sub = df[cats == label]
@@ -106,7 +98,7 @@ def _add_cat_traces(fig, df, x_col, y_col, customdata_cols=None,
             fig.add_trace(trace)
 
 
-# ── Tab 1: 3D Local Vol Surface ─────────────────────────────────────────────
+# Tab 1: 3D local vol surface
 
 def make_local_vol_surface(local_vol, log_m_grid, ttm_grid):
     fig = go.Figure(go.Surface(
@@ -140,7 +132,7 @@ def make_local_vol_surface(local_vol, log_m_grid, ttm_grid):
     return fig
 
 
-# ── Tab 2: IV vs Local Vol Side-by-Side ──────────────────────────────────────
+# Tab 2: IV vs local vol side-by-side
 
 def make_iv_vs_local_vol(iv_surface, local_vol, log_m_grid, ttm_grid):
     fig = make_subplots(
@@ -165,7 +157,7 @@ def make_iv_vs_local_vol(iv_surface, local_vol, log_m_grid, ttm_grid):
     return fig
 
 
-# ── Tab 3: Local Vol Smiles by Maturity ──────────────────────────────────────
+# Tab 3: local vol smiles by maturity
 
 def make_local_vol_smiles(local_vol, log_m_grid, ttm_grid):
     n_slices = 10
@@ -190,7 +182,7 @@ def make_local_vol_smiles(local_vol, log_m_grid, ttm_grid):
     return fig
 
 
-# ── Tab 4: MC vs SSVI — Scatter (all + liquid) ────────────────────────────
+# Tab 4: MC vs SSVI scatter (all + liquid)
 
 def make_mc_vs_ssvi_scatter(df):
     liquid = df[df["ssvi_price"] >= 10.0]
@@ -207,7 +199,7 @@ def make_mc_vs_ssvi_scatter(df):
     )
     cdata = ["strike", "ttm", "option_type", "ssvi_price", "mc_price", "price_error_pct"]
 
-    # All — log
+    # All, log
     _add_cat_traces(fig, df, "ssvi_price", "mc_price",
                     customdata_cols=cdata, hovertemplate=hover,
                     row=1, col=1, size=4, opacity=0.4)
@@ -219,7 +211,7 @@ def make_mc_vs_ssvi_scatter(df):
     fig.update_xaxes(type="log", title_text="SSVI BS Price ($)", row=1, col=1)
     fig.update_yaxes(type="log", title_text="MC Price ($)", row=1, col=1)
 
-    # Liquid — linear
+    # Liquid, linear
     if len(liquid) > 0:
         _add_cat_traces(fig, liquid, "ssvi_price", "mc_price",
                         customdata_cols=cdata, hovertemplate=hover,
@@ -249,7 +241,7 @@ def make_mc_vs_ssvi_scatter(df):
     return fig
 
 
-# ── Tab 5: Absolute Error ($) vs TTM ────────────────────────────────────────
+# Tab 5: absolute error ($) vs TTM
 
 def make_abs_error(df):
     fig = make_subplots(rows=1, cols=2,
@@ -301,7 +293,7 @@ def make_abs_error(df):
     return fig
 
 
-# ── Tab 6: Percentage Error (%) vs TTM ───────────────────────────────────────
+# Tab 6: percentage error (%) vs TTM
 
 def make_pct_error(df):
     fig = make_subplots(rows=1, cols=2,
@@ -352,7 +344,7 @@ def make_pct_error(df):
     return fig
 
 
-# ── Tab 7: Error vs Moneyness ────────────────────────────────────────────────
+# Tab 7: error vs moneyness
 
 def make_error_vs_moneyness(df):
     fig = make_subplots(rows=1, cols=2,
@@ -395,15 +387,15 @@ def make_error_vs_moneyness(df):
     return fig
 
 
-# ── Tab 8: Percentage Error vs Liquidity ─────────────────────────────────────
+# Tab 8: percentage error vs liquidity
 
 def make_error_vs_liquidity(df):
     """Percentage error vs liquidity (volume and open interest)."""
-    # Need volume and openInterest — merge from source CSV
+    # volume/openInterest live in the source CSV
     src_path = os.path.join(IV_DIR_DATA, "spx_iv_data.csv")
     src = pd.read_csv(src_path)
 
-    # Merge on strike + option_type + rounded TTM (float precision differs between files)
+    # Merge on strike + option_type + rounded TTM (float precision differs)
     if "volume" not in src.columns and "openInterest" not in src.columns:
         fig = go.Figure()
         fig.add_annotation(text="No volume or openInterest data available",
@@ -422,7 +414,7 @@ def make_error_vs_liquidity(df):
         on=["strike", "ttm_round", "option_type"], how="left"
     ).drop(columns=["ttm_round"])
 
-    # Fill NaN volume/OI with 0
+    # NaN volume/OI -> 0
     if "volume" in merged.columns:
         merged["volume"] = pd.to_numeric(merged["volume"], errors="coerce").fillna(0)
     if "openInterest" in merged.columns:
@@ -441,7 +433,7 @@ def make_error_vs_liquidity(df):
     )
     cdata = ["strike", "ttm", "option_type", "fwd_log_m", "ssvi_price"]
 
-    # Volume panel
+    # Volume
     if "volume" in liquid.columns:
         has_vol = liquid[liquid["volume"] > 0]
         if len(has_vol) > 0:
@@ -456,7 +448,7 @@ def make_error_vs_liquidity(df):
         fig.update_xaxes(type="log", title_text="Volume", row=1, col=1)
     fig.update_yaxes(title_text="Error (%)", row=1, col=1)
 
-    # Open Interest panel
+    # Open interest
     if "openInterest" in liquid.columns:
         has_oi = liquid[liquid["openInterest"] > 0]
         if len(has_oi) > 0:
@@ -475,10 +467,10 @@ def make_error_vs_liquidity(df):
     return fig
 
 
-# ── Tab 9: Error Diagnostic (interactive filtering) ──────────────────────────
+# Tab 9: error diagnostic (interactive filtering)
 
 def prepare_diagnostic_data(df):
-    """Prepare repricing data as JSON for the interactive diagnostic tab."""
+    """Repricing data as dict-of-lists for the interactive diagnostic tab."""
     cols = ["strike", "ttm", "option_type", "fwd_log_m",
             "ssvi_price", "mc_price", "price_error", "price_error_pct"]
     clean = df[cols].dropna().copy()
@@ -486,7 +478,7 @@ def prepare_diagnostic_data(df):
     return clean.to_dict(orient="list")
 
 
-# ── Tab 10: Reliability Mask ─────────────────────────────────────────────────
+# Tab 10: reliability mask
 
 def make_reliability_mask(mask, log_m_grid, ttm_grid):
     fig = go.Figure(go.Heatmap(
@@ -512,7 +504,7 @@ def make_reliability_mask(mask, log_m_grid, ttm_grid):
     return fig
 
 
-# ── Tab 9: Summary Statistics ────────────────────────────────────────────────
+# Summary statistics tab
 
 def make_summary_table(df, params):
     liquid = df[df["ssvi_price"] >= 10.0]
@@ -579,18 +571,14 @@ def make_summary_table(df, params):
     return fig
 
 
-# ── Tab 11: IV Error in Basis Points ────────────────────────────────────────
+# IV error (bp) tab
 
 def make_iv_error(df: pd.DataFrame) -> go.Figure:
     """
-    Three-panel IV error analysis (MC IV − market IV) in basis points.
+    Three-panel IV error (MC IV − market IV) in bp: vs k, vs TTM, distribution
+    with per-type mean lines.
 
-    Left   — IV error vs forward log-moneyness (all options).
-    Middle — IV error vs TTM to reveal maturity-dependent bias.
-    Right  — Distribution of IV errors with mean lines per option type.
-
-    Requires iv_error_bps column in df (written by dupire_local_vol.py).
-    Returns None if the column is absent (old repricing file).
+    Needs iv_error_bps (from dupire_local_vol.py); shows a placeholder if absent.
     """
     if "iv_error_bps" not in df.columns:
         fig = go.Figure()
@@ -631,7 +619,7 @@ def make_iv_error(df: pd.DataFrame) -> go.Figure:
         color  = CAT_COLORS[label]
         symbol = CAT_SYMBOLS[label]
 
-        # Left: vs moneyness
+        # vs moneyness
         fig.add_trace(go.Scatter(
             x=sub["fwd_log_m"], y=sub["iv_error_bps"],
             mode="markers",
@@ -641,7 +629,7 @@ def make_iv_error(df: pd.DataFrame) -> go.Figure:
             hovertemplate=hover_scatter,
         ), row=1, col=1)
 
-        # Middle: vs TTM
+        # vs TTM
         fig.add_trace(go.Scatter(
             x=sub["ttm"], y=sub["iv_error_bps"],
             mode="markers",
@@ -651,7 +639,7 @@ def make_iv_error(df: pd.DataFrame) -> go.Figure:
             hovertemplate=hover_scatter,
         ), row=1, col=2)
 
-        # Right: histogram
+        # histogram
         fig.add_trace(go.Histogram(
             x=sub["iv_error_bps"], nbinsx=50,
             marker_color=color, opacity=0.6,
@@ -665,7 +653,7 @@ def make_iv_error(df: pd.DataFrame) -> go.Figure:
     fig.add_vline(x=0, line_dash="dash", line_color="black", opacity=0.5, row=1, col=1)
     fig.add_vline(x=0, line_dash="dash", line_color="black", opacity=0.5, row=1, col=3)
 
-    # Mean lines on histogram for calls/puts
+    # Call/put mean lines on histogram
     for opt_type, color, label in [("call", "#1f77b4", "Call mean"),
                                     ("put",  "#d62728", "Put mean")]:
         sub = valid[valid["option_type"] == opt_type]["iv_error_bps"].dropna()
@@ -675,7 +663,7 @@ def make_iv_error(df: pd.DataFrame) -> go.Figure:
                           annotation_text=f"{label}: {sub.mean():+.1f}bp",
                           annotation_position="top right")
 
-    # Summary annotation on left panel
+    # Summary annotation (left panel)
     me   = valid["iv_error_bps"].mean()
     mae  = valid["iv_error_bps"].abs().mean()
     rmse = float(np.sqrt((valid["iv_error_bps"]**2).mean()))
@@ -710,11 +698,11 @@ def make_iv_error(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# ── Tab 12: Dupire MC vs SSVI Repricing ──────────────────────────────────────
+# Tab 12: Dupire MC vs SSVI repricing
 
 def _bs_price_fwd(F: np.ndarray, K: np.ndarray, T: np.ndarray,
                   r: float, sigma: np.ndarray, is_call: np.ndarray) -> np.ndarray:
-    """Vectorised forward-based BSM pricer.  price = e^{-rT}[F·N(d1) - K·N(d2)]."""
+    """Vectorised forward BSM: price = e^{-rT}[F·N(d1) − K·N(d2)]."""
     valid = (sigma > 1e-6) & (T > 0)
     price = np.zeros(len(F))
     v = valid
@@ -732,15 +720,14 @@ def make_dupire_vs_ssvi(repricing: pd.DataFrame, iv_surface: np.ndarray,
                         log_m_grid: np.ndarray, ttm_grid: np.ndarray,
                         params: dict) -> go.Figure:
     """
-    Compare Dupire MC prices against SSVI-smoothed prices for all priced options.
+    Dupire MC vs SSVI-smoothed prices for all priced options.
 
-    SSVI price: interpolate IV from the pre-computed iv_surface grid at each
-    option's (fwd_log_m, ttm), then price via forward-based BSM.
-    Error: (mc_price − ssvi_price) / ssvi_price × 100 %.
+    SSVI price = forward BSM at the iv_surface IV interpolated at each
+    option's (fwd_log_m, ttm). Error = (mc − ssvi)/ssvi × 100%.
     """
     r = params["r"]
 
-    # Interpolate SSVI IV at every option's (k, T)
+    # SSVI IV at every option's (k, T)
     interp_fn = RegularGridInterpolator(
         (log_m_grid, ttm_grid), iv_surface,
         method="linear", bounds_error=False, fill_value=np.nan,
@@ -748,7 +735,7 @@ def make_dupire_vs_ssvi(repricing: pd.DataFrame, iv_surface: np.ndarray,
     pts = repricing[["fwd_log_m", "ttm"]].values
     iv_ssvi = interp_fn(pts)
 
-    # BSM price using the forward already in the repricing file
+    # BSM price using the forward from the repricing file
     F       = repricing["forward"].values
     K       = repricing["strike"].values
     T       = repricing["ttm"].values
@@ -759,7 +746,7 @@ def make_dupire_vs_ssvi(repricing: pd.DataFrame, iv_surface: np.ndarray,
     df["ssvi_price"] = ssvi_price
     df["iv_ssvi"]    = iv_ssvi
 
-    # Drop rows where interpolation failed (options outside IV surface grid)
+    # Drop options outside the IV surface grid (interpolation failed)
     df = df[(df["ssvi_price"] > 0) & df["ssvi_price"].notna()].copy()
     df["err_pct"] = (df["mc_price"] - df["ssvi_price"]) / df["ssvi_price"] * 100.0
 
@@ -799,7 +786,7 @@ def make_dupire_vs_ssvi(repricing: pd.DataFrame, iv_surface: np.ndarray,
         color  = CAT_COLORS[label]
         symbol = CAT_SYMBOLS[label]
 
-        # Left: price scatter
+        # price scatter
         fig.add_trace(go.Scatter(
             x=sub["ssvi_price"], y=sub["mc_price"],
             mode="markers",
@@ -810,7 +797,7 @@ def make_dupire_vs_ssvi(repricing: pd.DataFrame, iv_surface: np.ndarray,
             hovertemplate=hover_scatter,
         ), row=1, col=1)
 
-        # Right: error vs SSVI price
+        # error vs SSVI price
         fig.add_trace(go.Scatter(
             x=sub["ssvi_price"], y=sub["err_pct"],
             mode="markers",
@@ -829,7 +816,7 @@ def make_dupire_vs_ssvi(repricing: pd.DataFrame, iv_surface: np.ndarray,
         name="y = x", showlegend=False,
     ), row=1, col=1)
 
-    # Middle: histogram by category
+    # histogram by category
     for label in ["OTM Call", "ITM Call", "OTM Put", "ITM Put"]:
         sub = df[df["category"] == label]
         if len(sub) == 0:
@@ -869,7 +856,7 @@ def make_dupire_vs_ssvi(repricing: pd.DataFrame, iv_surface: np.ndarray,
     return fig
 
 
-# ── HTML Assembly (reuse iv_explorer pattern) ────────────────────────────────
+# HTML assembly
 
 TAB_DESCRIPTIONS = {
     "Local Vol Surface": (
@@ -953,16 +940,11 @@ TAB_DESCRIPTIONS = {
 
 
 def build_html(figures, tab_names, descriptions, diagnostic_data=None, diagnostic_tab_idx=None):
-    """Build a single HTML file with CSS tabs and separate Plotly figures.
+    """Build one HTML file with CSS tabs and per-tab Plotly figures.
 
-    Parameters
-    ----------
-    diagnostic_data : dict or None
-        If provided, raw repricing data (as dict-of-lists) for the interactive
-        diagnostic tab. Embedded as JSON for client-side filtering.
-    diagnostic_tab_idx : int or None
-        Index in tab_names of the diagnostic tab (gets custom HTML instead of
-        a Plotly figure).
+    diagnostic_data: dict-of-lists repricing data embedded as JSON for the
+    client-side-filtered diagnostic tab (or None). diagnostic_tab_idx: its
+    index in tab_names (custom HTML instead of a Plotly figure).
     """
     fig_json_list = []
     fig_idx_map = {}  # tab index -> figSpecs index
@@ -1263,7 +1245,7 @@ def main():
         make_pct_error(repricing),
         make_error_vs_moneyness(repricing),
         make_error_vs_liquidity(repricing),
-        None,  # diagnostic tab — custom HTML, no Plotly figure
+        None,  # diagnostic tab: custom HTML
         make_reliability_mask(mask, log_m_grid, ttm_grid),
         make_summary_table(repricing, params),
         make_iv_error(repricing),

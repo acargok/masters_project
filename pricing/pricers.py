@@ -12,30 +12,11 @@ logger = logging.getLogger(__name__)
 
 def bs_cliquet_price(S0, r, q, sigma, reset_dates, payoff_fn, payoff_kwargs,
                      n_paths=500_000, seed=99):
-    """
-    Price a cliquet under flat Black-Scholes (geometric BM) as a sanity check.
-
-    Uses the same MC framework but with L=1 and constant vol (no stochastic
-    variance).
-
-    Parameters
-    ----------
-    S0 : float
-    r, q, sigma : float
-    reset_dates : np.ndarray
-    payoff_fn : callable
-    payoff_kwargs : dict
-    n_paths : int
-    seed : int
-
-    Returns
-    -------
-    dict
-        price, se, payoffs.
-    """
+    """Flat Black-Scholes (constant vol, no stoch variance) cliquet price as a
+    sanity check. Returns dict: price, se, payoffs."""
     rng = np.random.default_rng(seed)
 
-    # Build time grid hitting reset dates exactly (weekly sub-stepping)
+    # Time grid hitting each reset exactly (weekly sub-stepping)
     all_times = [0.0]
     for T in reset_dates:
         t_prev = all_times[-1]
@@ -96,11 +77,9 @@ def heston_cliquet_price(S0, r, q, heston, reset_dates, payoff_fn,
 def bergomi_cliquet_price(S0, r, q, bergomi, fwd_var, ttm_grid, reset_dates,
                           payoff_fn, payoff_kwargs, n_paths=500_000,
                           dt_max=1.0/52.0, seed=99):
-    """Price a cliquet under pure Bergomi (L=1, BergomiVariance) — diagnostic
-    benchmark mirroring `heston_cliquet_price`. The leverage function is
-    identically 1, so any pricing difference vs the calibrated LSV run
-    isolates the contribution of the leverage surface.
-    """
+    """Pure Bergomi (L=1) cliquet price, mirroring heston_cliquet_price. With
+    L identically 1, the gap vs the calibrated LSV run isolates the leverage
+    surface's contribution."""
     def leverage_one(S_arr, t):
         return np.ones(len(S_arr))
 
@@ -113,9 +92,9 @@ def bergomi_cliquet_price(S0, r, q, bergomi, fwd_var, ttm_grid, reset_dates,
         ttm_grid=ttm_grid,
         seed=seed + 5000,
     )
-    # Spot-vol correlation handled internally by BergomiVariance via the 3x3
-    # Cholesky; the rho passed to simulate_lsv is unused on the Bergomi branch
-    # (uses_spot_noise = True), but we pass rho1 for parity with the LSV path.
+    # Spot-vol correlation handled inside BergomiVariance (3x3 Cholesky); the
+    # rho here is unused on the Bergomi branch (uses_spot_noise=True), passed
+    # as rho1 for parity with the LSV path.
     rho_eff = bergomi["rho1"]
     sim = simulate_lsv(S0, r, q, rho_eff, leverage_one, var_proc,
                        reset_dates, n_paths, dt_max=dt_max, seed=seed)
@@ -131,39 +110,20 @@ def bergomi_cliquet_price(S0, r, q, bergomi, fwd_var, ttm_grid, reset_dates,
 def price_cliquet(inputs, payoff_fn, payoff_kwargs, payoff_name,
                   n_paths=500_000, dt_max=1.0 / 52.0, seed=42,
                   variance_scheme="qe"):
-    """
-    Price a cliquet option under the calibrated Heston LSV model.
+    """Price a cliquet under the calibrated Heston LSV model.
 
-    Parameters
-    ----------
-    inputs : dict
-        Output of load_pricing_inputs().
-    payoff_fn : callable
-        Maps (returns, **kwargs) -> per-path payoffs.
-    payoff_kwargs : dict
-        Extra arguments for the payoff function.
-    payoff_name : str
-        Label for logging.
-    n_paths : int
-    dt_max : float
-    seed : int
-
-    Returns
-    -------
-    dict
-        price, se, ci_half, payoffs, returns, S_resets, sim_results.
-    """
+    inputs: load_pricing_inputs() output. payoff_fn(returns, **kwargs) ->
+    per-path payoffs; payoff_name labels logging. Returns dict with price, se,
+    ci_half, baselines, payoffs/returns and sample paths."""
     S0 = inputs["S"]
     r = inputs["r"]
     q = inputs["q"]
     heston = inputs["heston"]
 
-    # Build leverage interpolator
     leverage_fn = build_leverage_interpolator(
         inputs["leverage"], inputs["spot_grid"], inputs["time_grid"]
     )
 
-    # Variance process
     var_process = HestonVariance(
         kappa=heston["kappa"],
         theta=heston["theta"],
@@ -173,24 +133,21 @@ def price_cliquet(inputs, payoff_fn, payoff_kwargs, payoff_name,
         rho=heston["rho"],
     )
 
-    # Monthly reset dates over 1 year
+    # Monthly resets over 1 year
     n_resets = 12
     reset_dates = np.array([(i + 1) / 12.0 for i in range(n_resets)])
 
     logger.info(f"Pricing {payoff_name}: {n_paths:,} paths, "
                 f"{n_resets} monthly resets, dt_max={dt_max:.4f}")
 
-    # Simulate
     sim = simulate_lsv(
         S0, r, q, heston["rho"], leverage_fn, var_process,
         reset_dates, n_paths, dt_max=dt_max, seed=seed,
     )
 
-    # Compute returns and payoffs
     returns = compute_returns(sim["S_resets"], S0)
     payoffs = payoff_fn(returns, **payoff_kwargs)
 
-    # Discount to present
     T_final = reset_dates[-1]
     df = np.exp(-r * T_final)
     discounted = df * payoffs
@@ -202,7 +159,7 @@ def price_cliquet(inputs, payoff_fn, payoff_kwargs, payoff_name,
     logger.info(f"  {payoff_name}: price = {price:.6f}, SE = {se:.6f}, "
                 f"95% CI = [{price - ci_half:.6f}, {price + ci_half:.6f}]")
 
-    # BS baseline (flat ATM vol = sqrt(V0) as a rough proxy)
+    # BS baseline (flat ATM vol ~ sqrt(V0))
     atm_vol = np.sqrt(heston["V0"])
     bs_result = bs_cliquet_price(
         S0, r, q, atm_vol, reset_dates, payoff_fn, payoff_kwargs,
@@ -211,7 +168,7 @@ def price_cliquet(inputs, payoff_fn, payoff_kwargs, payoff_name,
     logger.info(f"  BS baseline ({payoff_name}, vol={atm_vol:.4f}): "
                 f"price = {bs_result['price']:.6f}")
 
-    # Pure Heston baseline (L=1, no leverage)
+    # Pure Heston baseline (L=1)
     heston_result = heston_cliquet_price(
         S0, r, q, heston, reset_dates, payoff_fn, payoff_kwargs,
         n_paths=n_paths, dt_max=dt_max, seed=seed + 2000,
@@ -220,8 +177,7 @@ def price_cliquet(inputs, payoff_fn, payoff_kwargs, payoff_name,
     logger.info(f"  Heston baseline ({payoff_name}): "
                 f"price = {heston_result['price']:.6f}")
 
-    # Pure Bergomi baseline (L=1, BergomiVariance) — symmetric companion to
-    # the Heston baseline above.  Only computed if Bergomi inputs are present.
+    # Pure Bergomi baseline (L=1) — only if Bergomi inputs present.
     bergomi_params = inputs.get("bergomi")
     fwd_var = inputs.get("fwd_var")
     if bergomi_params is not None and fwd_var is not None:
@@ -263,12 +219,8 @@ def price_cliquet(inputs, payoff_fn, payoff_kwargs, payoff_name,
 
 def price_cliquet_bergomi(inputs, payoff_fn, payoff_kwargs, payoff_name,
                           n_paths=500_000, dt_max=1.0 / 52.0, seed=42):
-    """
-    Price a cliquet option under the calibrated Bergomi LSV model.
-
-    Same interface as price_cliquet() but uses BergomiVariance and
-    a weighted rho for spot-vol correlation.
-    """
+    """Price a cliquet under the calibrated Bergomi LSV model. Same interface
+    as price_cliquet() but uses BergomiVariance and a weighted spot-vol rho."""
     S0 = inputs["S"]
     r = inputs["r"]
     q = inputs["q"]
@@ -289,8 +241,8 @@ def price_cliquet_bergomi(inputs, payoff_fn, payoff_kwargs, payoff_name,
         seed=seed + 5000,
     )
 
-    # Effective spot-vol correlation: use rho1 (dominant factor)
-    # The full 3D correlation is handled inside BergomiVariance.step()
+    # Effective spot-vol rho = rho1 (dominant factor); full 3D correlation
+    # handled inside BergomiVariance.step().
     rho_eff = bergomi["rho1"]
 
     n_resets = 12
@@ -316,7 +268,7 @@ def price_cliquet_bergomi(inputs, payoff_fn, payoff_kwargs, payoff_name,
 
     logger.info(f"  {payoff_name} (Bergomi): price = {price:.6f}, SE = {se:.6f}")
 
-    # BS baseline
+    # BS baseline (ATM vol from fwd variance at T=0.5)
     atm_vol = np.sqrt(max(float(var_process.fwd_var_interp(0.5)), 1e-6))
     bs_result = bs_cliquet_price(
         S0, r, q, atm_vol, reset_dates, payoff_fn, payoff_kwargs,
@@ -331,8 +283,7 @@ def price_cliquet_bergomi(inputs, payoff_fn, payoff_kwargs, payoff_name,
     logger.info(f"  Heston baseline ({payoff_name}): "
                 f"price = {heston_result['price']:.6f}")
 
-    # Pure Bergomi baseline (L=1, BergomiVariance) — symmetric companion to
-    # the Heston baseline above. Uses the same Bergomi inputs as the LSV run.
+    # Pure Bergomi baseline (L=1), same Bergomi inputs as the LSV run.
     bergomi_result = bergomi_cliquet_price(
         S0, r, q, bergomi, inputs["fwd_var"], inputs["ttm_grid"],
         reset_dates, payoff_fn, payoff_kwargs,

@@ -10,13 +10,10 @@ from config import *
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# SECTION 1 — MARKET DATA LOADING (OptionMetrics CSV)
-# =============================================================================
+# Section 1 — Market data loading (OptionMetrics CSV)
 
 def _resolve_snapshot_date(raw: pd.DataFrame) -> str:
-    """Pick the snapshot date: SNAPSHOT_DATE if set, else the latest date in
-    the file. Returns the date as an ISO 'YYYY-MM-DD' string."""
+    """SNAPSHOT_DATE if set, else latest date in file, as 'YYYY-MM-DD'."""
     if SNAPSHOT_DATE is not None:
         return SNAPSHOT_DATE
     dates = sorted(raw["date"].unique())
@@ -27,36 +24,22 @@ def _resolve_snapshot_date(raw: pd.DataFrame) -> str:
 
 
 def fetch_risk_free_rate() -> float:
-    """Return RISK_FREE_RATE.
-
-    Sourced from the OptionMetrics zero curve / linked rate file. Treated as a
-    continuously-compounded annualised rate, consistent with every BSM formula
-    in this file.
-    """
+    """Return RISK_FREE_RATE (continuously-compounded annualised)."""
     logger.info(f"Risk-free rate (hardcoded): {RISK_FREE_RATE:.4f}")
     return float(RISK_FREE_RATE)
 
 
 def fetch_dividend_yield() -> float:
-    """Return DIVIDEND_YIELD.
-
-    SPX trailing-12-month dividend yield from the OptionMetrics database. Used
-    as a fallback in `compute_implied_forwards()` when an expiry has too few
-    near-ATM call-put pairs to imply a forward; per-expiry `q_eff` is preferred
-    everywhere downstream.
-    """
+    """Return DIVIDEND_YIELD (SPX TTM yield); fallback when an expiry lacks
+    enough call-put pairs to imply a forward (per-expiry q_eff preferred)."""
     logger.info(f"Dividend yield (hardcoded): {DIVIDEND_YIELD:.4f}")
     return float(DIVIDEND_YIELD)
 
 
 def _infer_spot_from_parity(raw_filtered: pd.DataFrame, r: float, q: float) -> float:
-    """Infer SPX spot from put-call parity at the shortest available expiry.
-
-    Uses the same near-ATM-pair median estimator as
-    `compute_implied_forwards()`, then converts F → S via S = F·exp(-(r-q)T).
-    Falls back to the strike of the most-traded near-ATM contract if no
-    pairs are available.
-    """
+    """Infer SPX spot from put-call parity at the shortest expiry:
+    median-pair F (as in compute_implied_forwards), then S = F·exp(-(r-q)T).
+    Falls back to the most-traded near-ATM strike if no pairs exist."""
     df = raw_filtered.copy()
     df = df[(df["mid"] > 0.0) & (df["best_bid"] > 0.0)]
     if df.empty:
@@ -84,20 +67,13 @@ def _infer_spot_from_parity(raw_filtered: pd.DataFrame, r: float, q: float) -> f
 
 
 def fetch_spot_price() -> float:
-    """Return SPX spot for the snapshot date.
-
-    Uses OVERRIDE_SPOT_PRICE if set, otherwise infers from put-call parity
-    on the same data the surface is built from. Inference requires the raw
-    chain to have already been loaded; this function side-loads it via the
-    module-level cache populated by `fetch_option_chain` on first call.
-    """
+    """Return SPX spot: OVERRIDE_SPOT_PRICE if set, else infer from put-call
+    parity on the surface data (side-loading the raw chain via the cache)."""
     if OVERRIDE_SPOT_PRICE is not None:
         logger.info(f"SPX spot (override): {OVERRIDE_SPOT_PRICE:.2f}")
         return float(OVERRIDE_SPOT_PRICE)
     if _RAW_CHAIN_CACHE["df"] is None:
-        # Force a load — but with S unknown we cannot apply the moneyness
-        # filter yet. fetch_option_chain handles a None spot by deferring
-        # the moneyness column to the caller.
+        # Load with S unknown; moneyness filter deferred until S is available.
         _ = fetch_option_chain(S=None)
     return _infer_spot_from_parity(
         _RAW_CHAIN_CACHE["df"],
@@ -106,21 +82,14 @@ def fetch_spot_price() -> float:
     )
 
 
-# Module-level cache so that fetch_spot_price() and fetch_option_chain()
-# can share the same parsed CSV without re-reading it twice.
+# Shared parsed-CSV cache for fetch_spot_price() and fetch_option_chain().
 _RAW_CHAIN_CACHE = {"df": None, "snapshot": None, "S": None}
 
 
 def _load_optionmetrics_chain() -> pd.DataFrame:
-    """Read the raw OptionMetrics CSV, filter to SNAPSHOT_DATE, convert to
-    the column schema used by the rest of the pipeline.
-
-    Output schema:
-        strike, expiry, ttm, option_type, bid, ask, mid,
-        openInterest, volume, iv_yf
-    plus the OptionMetrics raw fields kept for diagnostics:
-        best_bid, best_offer, impl_volatility, delta, gamma, vega, theta.
-    """
+    """Read the raw OptionMetrics CSV, filter to SNAPSHOT_DATE, convert to the
+    pipeline schema (strike, expiry, ttm, option_type, bid, ask, mid,
+    openInterest, volume, iv_yf, plus raw fields kept for diagnostics)."""
     if _RAW_CHAIN_CACHE["df"] is not None:
         return _RAW_CHAIN_CACHE["df"]
 
@@ -139,8 +108,7 @@ def _load_optionmetrics_chain() -> pd.DataFrame:
         )
     logger.info(f"Snapshot date: {snapshot}  ({len(raw):,} raw rows)")
 
-    # ── Column conversions ──
-    # OptionMetrics convention: strike_price stored as int = strike_in_dollars * 1000
+    # Column conversions. OptionMetrics: strike_price = strike_in_dollars * 1000
     raw["strike"] = raw["strike_price"].astype(float) / 1000.0
     raw["option_type"] = raw["cp_flag"].map({"C": "call", "P": "put"})
     raw["expiry"] = raw["exdate"].astype(str)
@@ -153,11 +121,10 @@ def _load_optionmetrics_chain() -> pd.DataFrame:
     raw["mid"] = (raw["bid"] + raw["ask"]) / 2.0
     raw["openInterest"] = raw["open_interest"].fillna(0).astype(float)
     raw["volume"] = raw.get("volume", pd.Series(0, index=raw.index)).fillna(0).astype(float)
-    # Column `iv_yf` holds the vendor (OptionMetrics) implied volatility,
-    # consumed by downstream comparison code.
+    # iv_yf = vendor (OptionMetrics) IV, used downstream for comparison.
     raw["iv_yf"] = pd.to_numeric(raw["impl_volatility"], errors="coerce")
 
-    # Drop rows that obviously can't form a valid quote
+    # Drop rows that can't form a valid quote
     raw = raw.dropna(subset=["strike", "option_type", "expiry", "ttm"])
     raw = raw[raw["option_type"].isin(["call", "put"])]
 
@@ -167,11 +134,9 @@ def _load_optionmetrics_chain() -> pd.DataFrame:
     logger.info(f"TTM filter [{MIN_TTM:.3f}, {MAX_TTM:.3f}]: "
                 f"{pre_ttm:,} → {len(raw):,}")
 
-    # Deduplicate (expiry, strike, option_type): OptionMetrics may carry
-    # multiple option series per expiry/strike (e.g., AM- vs PM-settled, or
-    # different `secid`/`optionid` revisions). Keep the row with the largest
-    # open interest — the most actively quoted contract. The pipeline assumes
-    # uniqueness on this key.
+    # Deduplicate (expiry, strike, type): OptionMetrics may carry multiple
+    # series per key (AM/PM-settled, secid revisions). Keep highest-OI row;
+    # pipeline assumes uniqueness on this key.
     pre_dedup = len(raw)
     raw = (raw.sort_values("openInterest", ascending=False)
               .drop_duplicates(subset=["expiry", "strike", "option_type"],
@@ -190,12 +155,8 @@ def _load_optionmetrics_chain() -> pd.DataFrame:
 
 
 def fetch_option_chain(S) -> pd.DataFrame:
-    """Return the OptionMetrics option chain.
-
-    `S` may be None on the very first call — used by `fetch_spot_price` when
-    inferring spot via parity before the moneyness filter. Once `S` is
-    available, the moneyness column is populated.
-    """
+    """Return the OptionMetrics option chain. S may be None (spot-inference
+    path before the moneyness filter); when given, adds a moneyness column."""
     raw = _load_optionmetrics_chain()
     out = raw.copy()
     if S is not None:

@@ -23,9 +23,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # Directories
-DIR_DATA   = "lsv/data"
-DIR_PLOTS  = "lsv/plots"
-DIR_ARRAYS = "lsv/arrays"
+DIR_DATA   = "lsv_heston/data"
+DIR_PLOTS  = "lsv_heston/plots"
+DIR_ARRAYS = "lsv_heston/arrays"
 IV_DIR_ARRAYS = "iv_surface/arrays"
 DUPIRE_DIR_ARRAYS = "dupire_vol/arrays"
 DUPIRE_DIR_DATA = "dupire_vol/data"

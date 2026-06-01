@@ -15,9 +15,7 @@ from config import *
 logger = logging.getLogger(__name__)
 
 
-# ===========================================================================
-# SECTION 6: PLOTTING
-# ===========================================================================
+# SECTION 6: Plotting
 
 def plot_local_vol_surface(
         local_vol: np.ndarray,
@@ -68,12 +66,10 @@ def plot_iv_vs_local_vol(
         log_m_grid: np.ndarray,
         S: float) -> None:
     """
-    Side-by-side 3D comparison of implied vol and Dupire local vol surfaces.
+    Side-by-side 3D IV vs Dupire local vol, both in k = log(K/F(0,T)).
 
-    Both surfaces are in forward log-moneyness coordinates k = log(K/F(0,T)).
-    The local vol surface is typically "spikier" than the IV surface: it
-    represents the instantaneous diffusion coefficient σ_loc(k, T), whereas
-    IV is the average volatility σ_avg(k, T) = √(w/T) over [0, T].
+    Local vol (instantaneous σ_loc) is spikier than IV (lifetime average
+    σ_avg = √(w/T)).
     """
     TTM_mesh, LM_mesh = np.meshgrid(ttm_grid, log_m_grid)
 
@@ -110,11 +106,9 @@ def plot_iv_vs_local_vol(
     logger.info(f"Saved: {DIR_PLOTS}/iv_vs_local_vol.png")
 
 
-# ===========================================================================
-# SECTION 7: REPRICING VALIDATION PLOTS
-# ===========================================================================
+# SECTION 7: Repricing validation plots
 
-# Option category colours: 4 groups (call/put × OTM/ITM)
+# 4 categories: call/put × OTM/ITM
 CATEGORY_STYLE = {
     "OTM Call": {"color": "#1f77b4", "marker": "o"},
     "ITM Call": {"color": "#7fbfff", "marker": "s"},
@@ -125,16 +119,15 @@ CATEGORY_STYLE = {
 
 def _classify_options(df: pd.DataFrame) -> pd.Series:
     """
-    Classify each option row into OTM Call / ITM Call / OTM Put / ITM Put.
+    Classify each option into OTM/ITM Call/Put.
 
-    Uses forward log-moneyness k = log(K/F) if available (k >= 0 = call OTM,
-    k < 0 = put OTM).  Falls back to spot moneyness K/S for old CSV formats.
+    Uses k = log(K/F) if present (k>=0: call OTM, put ITM), else spot
+    moneyness K/S (old CSVs).
     """
     cat = pd.Series("", index=df.index)
     is_call = df["option_type"] == "call"
 
     if "fwd_log_m" in df.columns:
-        # k >= 0: option is OTM for a call, ITM for a put; vice versa
         is_otm = ((is_call) & (df["fwd_log_m"] >= 0)) | \
                  ((~is_call) & (df["fwd_log_m"] < 0))
     else:
@@ -149,7 +142,7 @@ def _classify_options(df: pd.DataFrame) -> pd.Series:
 
 
 def _scatter_by_category(ax, df, x_col, y_col, alpha=0.7, s=25):
-    """Scatter with 4 option categories, each in its own colour/marker."""
+    """Scatter, one colour/marker per option category."""
     cats = _classify_options(df)
     for label, style in CATEGORY_STYLE.items():
         mask = cats == label
@@ -166,7 +159,7 @@ def plot_repricing_validation(result_df: pd.DataFrame) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     liquid = result_df[result_df["ssvi_price"] >= 10.0]
 
-    # Left: SSVI BS price vs MC price
+    # Left: SSVI vs MC price
     ax = axes[0]
     _scatter_by_category(ax, result_df, "ssvi_price", "mc_price", alpha=0.5, s=20)
     lims = [0, max(result_df["ssvi_price"].max(),
@@ -178,7 +171,7 @@ def plot_repricing_validation(result_df: pd.DataFrame) -> None:
     ax.set_title("SSVI vs MC Price\n(all options)", fontsize=11, fontweight="bold")
     ax.legend(fontsize=8, loc="upper left"); ax.grid(True, alpha=0.3)
 
-    # Middle: % error vs SSVI price (liquid)
+    # Middle: % error vs price (liquid)
     ax = axes[1]
     if len(liquid) > 0:
         _scatter_by_category(ax, liquid, "ssvi_price", "price_error_pct",
@@ -225,17 +218,15 @@ def plot_repricing_validation(result_df: pd.DataFrame) -> None:
 
 def plot_mc_vs_vanilla(result_df: pd.DataFrame) -> None:
     """
-    Full six-panel comparison: MC vs market prices for all in-bounds options.
+    Six-panel MC vs market comparison for all in-bounds options.
 
-    Row 1: Price scatter — log scale (all) and linear (liquid).
-    Row 2: Absolute $ error vs TTM and histogram.
-    Row 3: Percentage error vs TTM and histogram.
-    Options coloured by OTM/ITM × Call/Put.
+    Row 1 price scatter (log all / linear liquid), row 2 $ error vs TTM +
+    histogram, row 3 % error vs TTM + histogram. Coloured by category.
     """
     fig, axes = plt.subplots(3, 2, figsize=(16, 18))
     liquid = result_df[result_df["ssvi_price"] >= 10.0]
 
-    # Row 1 — price scatter
+    # Row 1: price scatter
     ax = axes[0, 0]
     _scatter_by_category(ax, result_df, "ssvi_price", "mc_price", alpha=0.3, s=10)
     lo = max(0.01, min(result_df["ssvi_price"].min(), result_df["mc_price"].min()))
@@ -276,7 +267,7 @@ def plot_mc_vs_vanilla(result_df: pd.DataFrame) -> None:
                  fontsize=11, fontweight="bold")
     ax.legend(fontsize=7, loc="upper left"); ax.grid(True, alpha=0.3)
 
-    # Row 2 — absolute error ($)
+    # Row 2: absolute error ($)
     ax = axes[1, 0]
     if len(liquid) > 0:
         _scatter_by_category(ax, liquid, "ttm", "price_error", alpha=0.4, s=12)
@@ -310,7 +301,7 @@ def plot_mc_vs_vanilla(result_df: pd.DataFrame) -> None:
     ax.set_title("Absolute Error Distribution (liquid)", fontsize=11, fontweight="bold")
     ax.legend(fontsize=7); ax.grid(True, alpha=0.3)
 
-    # Row 3 — percentage error (%)
+    # Row 3: percentage error (%)
     ax = axes[2, 0]
     liq_pct = liquid.dropna(subset=["price_error_pct"])
     if len(liq_pct) > 0:

@@ -13,46 +13,24 @@ from config import *
 logger = logging.getLogger(__name__)
 
 
-# ===========================================================================
-# SECTION 1: LOAD STEP 1 OUTPUTS
-# ===========================================================================
+# SECTION 1: Load Step 1 outputs
 
 def load_iv_surface() -> tuple:
     """
-    Load the SSVI surface outputs from Step 1 (iv_surface_ssvi.py).
+    Load SSVI surface outputs from Step 1 (iv_surface/).
 
-    Loads total_var_surface (primary Dupire input), iv_surface, the grid
-    arrays, the forward curve F(0,T), and per-TTM effective dividend yields.
-
-    Spot price is recovered from the option data as S = strike / moneyness
-    (exact by construction).
-
-    Returns
-    -------
-    tv_surface : np.ndarray, shape (n_k, n_T)
-        Total variance surface w(k, T) = σ_BS² · T.
-    iv_surface : np.ndarray, shape (n_k, n_T)
-        Implied volatility surface (for plotting).
-    ttm_grid : np.ndarray, shape (n_T,)
-        Uniform TTM grid.
-    log_m_grid : np.ndarray, shape (n_k,)
-        Uniform forward log-moneyness grid k = log(K/F).
-    df : pd.DataFrame
-        Option data (has fwd_log_m, total_var, iv, strike, mid columns).
-    S : float
-        Spot price recovered from the data.
-    fwd_curve : np.ndarray, shape (n_T, 2)
-        Forward curve on the TTM grid: [[T_1, F_1], …, [T_n, F_n]].
-    q_eff_grid : np.ndarray or None
-        Per-TTM effective dividend yield (shape n_T), or None if not found.
+    Returns (tv_surface w(k,T)=σ²·T (n_k,n_T), iv_surface, ttm_grid (uniform),
+    log_m_grid k=log(K/F) (uniform), df option data, S spot recovered as
+    strike/moneyness, fwd_curve [[T,F]] (n_T,2), q_eff_grid per-TTM div yield
+    or None).
     """
     tv_surface  = np.load(os.path.join(IV_DIR_ARRAYS, "total_var_surface.npy"))
     iv_surface  = np.load(os.path.join(IV_DIR_ARRAYS, "iv_surface.npy"))
     ttm_grid    = np.load(os.path.join(IV_DIR_ARRAYS, "ttm_grid.npy"))
     log_m_grid  = np.load(os.path.join(IV_DIR_ARRAYS, "log_m_grid.npy"))
-    # forward_curve.npy is F(T_i) on the TTM grid (same indexing as ttm_grid)
+    # forward_curve.npy is F(T_i), indexed like ttm_grid
     fwd_prices  = np.load(os.path.join(IV_DIR_ARRAYS, "forward_curve.npy"))
-    # Normalise to an (n_T, 2) array [[T, F]] for the interpolator.
+    # Normalise to (n_T, 2) [[T, F]] for the interpolator.
     if fwd_prices.ndim == 1:
         fwd_curve = np.column_stack([ttm_grid, fwd_prices])
     else:
@@ -64,11 +42,11 @@ def load_iv_surface() -> tuple:
         logger.info(f"Loaded q_eff grid: [{q_eff_grid.min():.4f}, {q_eff_grid.max():.4f}]")
     else:
         q_eff_grid = None
-        logger.info("No q_eff_grid.npy found — will use stored constant q from Step 1 market_params.json")
+        logger.info("No q_eff_grid.npy — using constant q from Step 1 market_params.json")
 
     df = pd.read_csv(os.path.join(IV_DIR_DATA, "spx_iv_data.csv"))
 
-    # Derive forward log-moneyness if the column is absent.
+    # Derive forward log-moneyness if absent.
     if "fwd_log_m" not in df.columns:
         fwd_df = pd.read_csv(os.path.join(IV_DIR_DATA, "implied_forwards.csv"))
         fwd_map = dict(zip(fwd_df["expiry"], fwd_df["forward"]))
@@ -76,7 +54,7 @@ def load_iv_surface() -> tuple:
     if "total_var" not in df.columns:
         df["total_var"] = df["iv"] ** 2 * df["ttm"]
 
-    # Recover spot price: S = strike / moneyness (exact for all rows)
+    # S = strike / moneyness (exact for all rows)
     S = float((df["strike"] / df["moneyness"]).median())
 
     logger.info(f"Loaded TV surface: {tv_surface.shape}, "
@@ -92,9 +70,7 @@ def load_iv_surface() -> tuple:
 
     return tv_surface, iv_surface, ttm_grid, log_m_grid, df, S, fwd_curve, q_eff_grid
 def load_step1_market_params() -> dict:
-    """
-    Load the exact market parameters used in Step 1.
-    """
+    """Load Step 1 market parameters (market_params.json)."""
     path = os.path.join(IV_DIR_DATA, "market_params.json")
     if not os.path.exists(path):
         raise FileNotFoundError(

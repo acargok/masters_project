@@ -38,7 +38,7 @@ warnings.filterwarnings("ignore")
 # ───────────────────────── Paths ─────────────────────────
 HERE        = Path(__file__).resolve().parent
 ROOT        = HERE.parent
-LSV_DIR     = ROOT / "lsv"
+LSV_DIR     = ROOT / "lsv_heston"
 BERGOMI_DIR = ROOT / "lsv_bergomi"
 OUT_DIR     = HERE / "appendix_plots"
 CACHE_DIR   = OUT_DIR / "cache"

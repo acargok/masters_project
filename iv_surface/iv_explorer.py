@@ -1,28 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IV Explorer — Interactive Plotly Dashboard (SSVI Pipeline)
-==========================================================
-Single HTML file with tabbed plots for exploring the SSVI IV surface fit.
-Uses pre-computed CSVs and .npy arrays from iv_surface_ssvi.py.
-
-Tabs
-----
- 1. Market Smiles       — raw IV smiles by expiry (forward log-moneyness)
- 2. Total Var Smiles    — raw total variance w = σ²·T per expiry
- 3. SSVI Fit            — per-expiry subplot: raw w vs SSVI model curve
- 4. Fitted Surface      — 3D total variance surface + IV surface side-by-side
- 5. θ(T) Term Structure — theta, phi, ATM total variance vs TTM
- 6. No-Butterfly Check  — G&J C1 and C2 conditions per expiry
- 7. Dupire Diagnostics  — Gatheral density g and local variance heatmaps
- 8. Validation          — computed vs interpolated IV; signed error distribution
- 9. Liquidity Map       — open interest bubble chart by moneyness × TTM
-
-Usage:
-    python iv_explorer.py
-
-Output:
-    plots/iv_explorer.html — open in any browser, switch between tabs
+IV Explorer — interactive Plotly dashboard for the SSVI fit. Builds a single
+tabbed HTML (plots/iv_explorer.html) from the CSVs and .npy arrays produced by
+iv_surface_ssvi.py. Tabs: market smiles, total-var smiles, SSVI fit, fitted
+surface, θ(T) term structure, no-butterfly check, Dupire diagnostics,
+validation, liquidity map, TV surface mesh.
 """
 
 import os
@@ -35,9 +18,7 @@ from scipy.interpolate import CubicSpline
 from iv_surface_ssvi import DIR_ARRAYS, DIR_DATA, DIR_PLOTS
 
 
-# =============================================================================
-# DATA LOADING
-# =============================================================================
+# Data loading
 
 def load_data() -> dict:
     iv = pd.read_csv(os.path.join(DIR_DATA, "spx_iv_data.csv"))
@@ -72,9 +53,7 @@ def load_data() -> dict:
     )
 
 
-# =============================================================================
-# HELPERS
-# =============================================================================
+# Helpers
 
 def _ssvi_w(k: np.ndarray, theta: float, phi: float, rho: float) -> np.ndarray:
     """SSVI total variance: w = (θ/2)[1 + ρφk + √((φk+ρ)²+1−ρ²)]."""
@@ -93,9 +72,7 @@ def _expiry_colorscale(n: int) -> list:
     return colors
 
 
-# =============================================================================
-# TAB 1 — Market Smiles (raw IV by expiry)
-# =============================================================================
+# Tab 1 — Market smiles (raw IV by expiry)
 
 def make_market_smiles(iv: pd.DataFrame) -> go.Figure:
     expiries = sorted(iv["expiry"].unique())
@@ -130,9 +107,7 @@ def make_market_smiles(iv: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# =============================================================================
-# TAB 2 — Total Variance Smiles (raw w = σ²·T by expiry)
-# =============================================================================
+# Tab 2 — Total variance smiles (raw w = σ²·T by expiry)
 
 def make_total_var_smiles(iv: pd.DataFrame) -> go.Figure:
     expiries = sorted(iv["expiry"].unique())
@@ -166,9 +141,7 @@ def make_total_var_smiles(iv: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# =============================================================================
-# TAB 3 — SSVI Fit: per-expiry subplot grid
-# =============================================================================
+# Tab 3 — SSVI fit: per-expiry subplot grid
 
 def make_ssvi_fit_grid(iv: pd.DataFrame, params: pd.DataFrame) -> go.Figure:
     expiries = sorted(params["expiry"].unique())
@@ -189,7 +162,6 @@ def make_ssvi_fit_grid(iv: pd.DataFrame, params: pd.DataFrame) -> go.Figure:
         horizontal_spacing=0.06,
     )
 
-    # Pre-build per-expiry lookup
     params_map = {row["expiry"]: row for _, row in params.iterrows()}
 
     for idx, exp in enumerate(expiries):
@@ -232,9 +204,7 @@ def make_ssvi_fit_grid(iv: pd.DataFrame, params: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# =============================================================================
-# TAB 4 — Fitted Surface (3D)
-# =============================================================================
+# Tab 4 — Fitted surface (3D)
 
 def make_fitted_surface(
     log_m_grid: np.ndarray,
@@ -277,9 +247,7 @@ def make_fitted_surface(
     return fig
 
 
-# =============================================================================
-# TAB 5 — θ(T) Term Structure
-# =============================================================================
+# Tab 5 — θ(T) term structure
 
 def make_term_structure(iv: pd.DataFrame, params: pd.DataFrame) -> go.Figure:
     params = params.sort_values("ttm")
@@ -358,9 +326,7 @@ def make_term_structure(iv: pd.DataFrame, params: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# =============================================================================
-# TAB 6 — No-Butterfly Check
-# =============================================================================
+# Tab 6 — No-butterfly check
 
 def make_nb_check(params: pd.DataFrame) -> go.Figure:
     params = params.sort_values("ttm").copy()
@@ -412,9 +378,7 @@ def make_nb_check(params: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# =============================================================================
-# TAB 7 — Dupire Diagnostics
-# =============================================================================
+# Tab 7 — Dupire diagnostics
 
 def make_dupire_diagnostics(
     log_m_grid: np.ndarray,
@@ -441,7 +405,7 @@ def make_dupire_diagnostics(
         horizontal_spacing=0.08,
     )
 
-    # g-surface — use a diverging colorscale centred at 0; red where g < 0
+    # g-surface: diverging colorscale centred at 0 (red where g < 0)
     g_clipped = np.clip(dupire_g.T, -1.0, 2.0)  # shape (n_ttm, n_logm)
     fig.add_trace(go.Heatmap(
         z=g_clipped,
@@ -491,9 +455,7 @@ def make_dupire_diagnostics(
     return fig
 
 
-# =============================================================================
-# TAB 8 — Validation
-# =============================================================================
+# Tab 8 — Validation
 
 def make_validation(val: pd.DataFrame) -> go.Figure:
     val = val.copy()
@@ -512,7 +474,7 @@ def make_validation(val: pd.DataFrame) -> go.Figure:
         horizontal_spacing=0.08,
     )
 
-    # ── Left: scatter computed vs interpolated ──
+    # Left: computed vs interpolated
     for sub, name, color, sym in [
         (calls, "Calls", "steelblue", "circle"),
         (puts,  "Puts",  "coral",     "diamond"),
@@ -543,8 +505,8 @@ def make_validation(val: pd.DataFrame) -> go.Figure:
         showlegend=True,
     ), row=1, col=1)
 
-    # ── Middle: signed error histogram ──
-    err_vp = val["iv_signed_err"] * 100  # in vol points
+    # Middle: signed error histogram
+    err_vp = val["iv_signed_err"] * 100  # vol points
     fig.add_trace(go.Histogram(
         x=err_vp,
         nbinsx=30,
@@ -566,7 +528,7 @@ def make_validation(val: pd.DataFrame) -> go.Figure:
         row=1, col=2,
     )
 
-    # ── Right: error vs market price (liquidity check) ──
+    # Right: error vs market price (liquidity check)
     for sub, name, color, sym in [
         (calls, "Calls", "steelblue", "circle"),
         (puts,  "Puts",  "coral",     "diamond"),
@@ -606,9 +568,7 @@ def make_validation(val: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# =============================================================================
-# TAB 9 — Liquidity Map
-# =============================================================================
+# Tab 9 — Liquidity map
 
 def make_liquidity_map(iv: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
@@ -654,21 +614,12 @@ def make_liquidity_map(iv: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# =============================================================================
-# TAB 10 — TV Surface Mesh (SSVI slices × cubic spline)
-# =============================================================================
+# Tab 10 — TV surface mesh (SSVI slices × cubic spline)
 
 def make_tv_mesh(params: pd.DataFrame) -> go.Figure:
     """
-    3D mesh of total variance surface.
-
-    Along k-axis   — SSVI slice curves evaluated at each market maturity
-                     using the fitted (θ, φ, ρ) per slice.
-    Along TTM-axis — cubic spline interpolation of θ, φ, ρ between
-                     the market maturity knots.
-
-    The SSVI slice ribs are drawn as thick coloured lines on top of the
-    filled surface so the two axes are visually distinct.
+    3D total-variance mesh: per-slice SSVI w(k) curves (fitted θ,φ,ρ) as ribs,
+    over a filled surface from cubic-spline interpolation of θ,φ,ρ in TTM.
     """
     params = params.sort_values("ttm").copy()
     ttms      = params["ttm"].values
@@ -677,11 +628,11 @@ def make_tv_mesh(params: pd.DataFrame) -> go.Figure:
     rho_mkt   = params["rho"].values
     expiries  = params["expiry"].values
 
-    # ── Fine grids ──
+    # Fine grids
     k_grid   = np.linspace(-1.2, 0.6, 160)
     ttm_fine = np.linspace(ttms[0], ttms[-1], 300)
 
-    # ── Cubic spline interpolation of (θ, φ, ρ) along TTM ──
+    # Cubic-spline interpolation of (θ, φ, ρ) along TTM
     cs_theta = CubicSpline(ttms, theta_mkt)
     cs_phi   = CubicSpline(ttms, phi_mkt)
     cs_rho   = CubicSpline(ttms, rho_mkt)
@@ -690,7 +641,7 @@ def make_tv_mesh(params: pd.DataFrame) -> go.Figure:
     phi_fine   = np.maximum(cs_phi(ttm_fine),   1e-8)
     rho_fine   = np.clip(cs_rho(ttm_fine), -0.999, 0.999)
 
-    # ── Build surface w[k, T] using cubic-spline params ──
+    # Build surface w[k, T] from cubic-spline params
     W = np.zeros((len(k_grid), len(ttm_fine)))
     for j in range(len(ttm_fine)):
         W[:, j] = _ssvi_w(k_grid, theta_fine[j], phi_fine[j], rho_fine[j])
@@ -756,9 +707,7 @@ def make_tv_mesh(params: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# =============================================================================
-# HTML BUILDER
-# =============================================================================
+# HTML builder
 
 TAB_DESCRIPTIONS = {
     "Market Smiles": (
@@ -915,9 +864,7 @@ renderPlot(0);
     )
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
+# Main
 
 def main() -> None:
     print("Loading data…")

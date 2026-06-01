@@ -1,29 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Nelson-Siegel-Svensson VS-vol fit (Svensson 1994).
-
-sigma_VS(T) = beta0
-            + beta1 * f1(T, tau1)
-            + beta2 * f2(T, tau1)
-            + beta3 * f2(T, tau2)
-
-with the two NSS basis functions
-    f1(T, tau) = (1 - exp(-T/tau)) / (T/tau)               -> 1 as T -> 0
-    f2(T, tau) = f1(T, tau) - exp(-T/tau)                  -> 0 as T -> 0
-
-Six parameters: beta0 (long-term level), beta1 (short-rate slope),
-beta2 / beta3 (signed magnitudes of the two humps at timescales tau1, tau2).
-
-The two-hump extension over the original Nelson-Siegel (1987) three-parameter
-form lets the curve resolve non-monotone term structures (e.g. the SPX VS-vol
-hump near T ~ 0.6 driven by short-end event density) that the monotone Wang
-5.2 form cannot represent.
-
-Reference:
-  Svensson, L.E.O. (1994). "Estimating and Interpreting Forward Interest
-  Rates: Sweden 1992-1994". IMF Working Paper WP/94/114.
-"""
+"""Nelson-Siegel-Svensson VS-vol fit (Svensson 1994):
+    sigma_VS(T) = beta0 + beta1 f1(T,tau1) + beta2 f2(T,tau1) + beta3 f2(T,tau2)
+with f1(T,tau)=(1-exp(-T/tau))/(T/tau) (->1) and f2=f1-exp(-T/tau) (->0) at T->0.
+Six params: level, short-rate slope, and two signed humps at tau1,tau2. The
+two-hump form resolves non-monotone term structures (e.g. the SPX hump near
+T~0.6) that the monotone Wang 5.2 form cannot."""
 
 import logging
 
@@ -61,16 +43,8 @@ def nss_vs_vol(T, beta0, beta1, beta2, beta3, tau1, tau2):
 
 
 def _nss_df1_dT(T, tau):
-    """
-    d/dT [(1 - exp(-T/tau)) / (T/tau)]
-        = tau / T**2 * [(T/tau + 1) exp(-T/tau) - 1]                (T > 0)
-        = -1 / (2 tau)                                              (T -> 0 limit)
-
-    Limit verified by Taylor expansion:
-        e^-u = 1 - u + u^2/2 - u^3/6 + ...
-        (u+1) e^-u - 1 = -u^2/2 + u^3/3 + O(u^4)
-        / u^2  ->  -1/2  as u -> 0
-    """
+    """d/dT f1 = tau/T^2 [(T/tau+1)exp(-T/tau) - 1] (T>0); limit -1/(2 tau) at
+    T->0 (Taylor: ((u+1)e^-u - 1)/u^2 -> -1/2)."""
     T = np.asarray(T, dtype=float)
     out = np.empty_like(T)
     small = np.abs(T) < _NSS_T_SMALL
@@ -83,11 +57,7 @@ def _nss_df1_dT(T, tau):
 
 
 def _nss_df2_dT(T, tau):
-    """
-    d/dT [f1(T, tau) - exp(-T/tau)]
-        = df1/dT + (1/tau) exp(-T/tau)                              (T > 0)
-        =  1 / (2 tau)                                              (T -> 0 limit)
-    """
+    """d/dT f2 = df1/dT + (1/tau)exp(-T/tau) (T>0); limit 1/(2 tau) at T->0."""
     T = np.asarray(T, dtype=float)
     return _nss_df1_dT(T, tau) + (1.0 / tau) * np.exp(-T / tau)
 
@@ -100,16 +70,9 @@ def nss_dvs_dT(T, beta0, beta1, beta2, beta3, tau1, tau2):
 
 
 def nss_fwd_variance(T, beta0, beta1, beta2, beta3, tau1, tau2):
-    """
-    Analytic initial forward variance under the NSS form:
-
-        xi^T_0 = d/dT [ T * sigma_VS(T)^2 ]
-               = sigma_VS(T)^2  +  2 T * sigma_VS(T) * dsigma_VS/dT
-               = sigma_VS(T) * ( sigma_VS(T) + 2 T * dsigma_VS/dT ).
-
-    The NSS curve is smooth in closed form, so the analytic derivative is exact
-    at every grid point, including the T = 0 boundary.
-    """
+    """Analytic initial forward variance under NSS:
+        xi^T_0 = d/dT[T sigma_VS^2] = sigma_VS (sigma_VS + 2 T dsigma_VS/dT).
+    Closed-form derivative, exact at every grid point including T=0."""
     T = np.asarray(T, dtype=float)
     sigma  = nss_vs_vol(T, beta0, beta1, beta2, beta3, tau1, tau2)
     dsigma = nss_dvs_dT(T, beta0, beta1, beta2, beta3, tau1, tau2)
@@ -117,24 +80,11 @@ def nss_fwd_variance(T, beta0, beta1, beta2, beta3, tau1, tau2):
 
 
 def fit_vs_vol_nss(ttm_grid, vs_vol, seed=42):
-    """
-    Fit the NSS VS-vol form by least squares.
+    """Least-squares fit of the NSS VS-vol form.
 
-    Parameters
-    ----------
-    ttm_grid : np.ndarray
-    vs_vol   : np.ndarray
-        Per-maturity VS volatility (e.g. Carr-Madan replication).
-    seed : int
-        Unused — kept for signature parity with the pipeline.
-
-    Returns
-    -------
-    dict
-        nss_beta_{0..3}, nss_tau_{1,2}, nss_rmse  (all floats).
-    np.ndarray
-        Fitted VS-vol curve evaluated on `ttm_grid`.
-    """
+    vs_vol: per-maturity VS volatility (e.g. Carr-Madan). seed unused (signature
+    parity). Returns (dict of nss_beta_{0..3}/nss_tau_{1,2}/nss_rmse, fitted
+    curve on ttm_grid)."""
     ttm = np.asarray(ttm_grid, dtype=float)
     target = np.asarray(vs_vol, dtype=float)
 
@@ -143,8 +93,8 @@ def fit_vs_vol_nss(ttm_grid, vs_vol, seed=42):
         return nss_vs_vol(ttm, b0, b1, b2, b3, t1, t2)
 
     def objective(p):
-        # L-BFGS-B doesn't support coupled bounds, so the tau2 > tau1 + 0.1
-        # ordering constraint is enforced as a soft penalty.
+        # Soft penalty for the tau2 > tau1+0.1 ordering (L-BFGS-B lacks
+        # coupled bounds).
         _, _, _, _, t1, t2 = p
         pen = 0.0
         if t2 <= t1 + 0.1:
@@ -153,12 +103,12 @@ def fit_vs_vol_nss(ttm_grid, vs_vol, seed=42):
 
     x0 = [float(np.mean(target)), 0.0, 0.0, 0.0, 0.5, 2.0]
     bounds = [
-        (0.05, 0.50),   # beta0  - asymptotic vol level
-        (-0.30, 0.30),  # beta1  - short-rate slope (signed)
-        (-0.30, 0.30),  # beta2  - first hump magnitude
-        (-0.30, 0.30),  # beta3  - second hump magnitude
-        (0.05, 2.0),    # tau1   - first hump timescale
-        (0.15, 10.0),   # tau2   - second hump timescale (penalty enforces > tau1+0.1)
+        (0.05, 0.50),   # beta0  asymptotic vol level
+        (-0.30, 0.30),  # beta1  short-rate slope (signed)
+        (-0.30, 0.30),  # beta2  first hump magnitude
+        (-0.30, 0.30),  # beta3  second hump magnitude
+        (0.05, 2.0),    # tau1   first hump timescale
+        (0.15, 10.0),   # tau2   second hump timescale (penalty enforces > tau1+0.1)
     ]
     result = optimize.minimize(
         objective, x0, method="L-BFGS-B", bounds=bounds,
@@ -184,11 +134,8 @@ def fit_vs_vol_nss(ttm_grid, vs_vol, seed=42):
 
 
 def compute_forward_variance(ttm_grid, vs_vol_fitted):
-    """
-    Finite-difference computation of xi^T_0 from a gridded VS-vol curve.
-    The pipeline uses `nss_fwd_variance` (analytic NSS derivative); this helper
-    provides a parity diagnostic against the finite-difference form.
-    """
+    """Finite-difference xi^T_0 from a gridded VS-vol curve; parity diagnostic
+    against the analytic nss_fwd_variance used by the pipeline."""
     total_var = vs_vol_fitted**2 * ttm_grid
     fwd_var = np.gradient(total_var, ttm_grid)
     fwd_var = np.maximum(fwd_var, 1e-6)

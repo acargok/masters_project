@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Top-level constants for the Bergomi forward-variance calibration (Step 3a)."""
 
-# ===== PATHS =====
+# Paths
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -13,17 +13,13 @@ DATA_DIR = BERGOMI_DIR / "data"
 PLOT_DIR = BERGOMI_DIR / "plots"
 ARRAY_DIR = BERGOMI_DIR / "arrays"
 
-# ===== Variance swap vol extraction defaults =====
-# Two methods are provided:
-#   "carr_madan": Carr-Madan (1998) / Demeterfi-Derman-Kamal-Zou (1999)
-#                 model-free replication. The default.
-#   "proxy":      uniform smile-average of total variance over the log-moneyness
-#                 grid; a quick approximation.
-
+# VS vol extraction method:
+#   "carr_madan": Carr-Madan / DDKZ model-free replication (default)
+#   "proxy":      uniform smile-average of total variance (approximation)
 VS_METHOD_DEFAULT = "carr_madan"
 
 _NSS_T_SMALL = 1e-8
 
-# Ensure generated-output directories exist (git-ignored, recreated each run).
+# Create output dirs (git-ignored).
 for _d in (DATA_DIR, PLOT_DIR, ARRAY_DIR):
     _d.mkdir(parents=True, exist_ok=True)

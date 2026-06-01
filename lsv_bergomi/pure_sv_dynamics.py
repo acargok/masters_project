@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Bergomi spot variance, option-pool selection, and pure-Bergomi MC simulation
-(no LSV leverage) for the pure-SV fit diagnostic.
-"""
+"""Bergomi spot variance, option-pool selection, and pure-Bergomi MC simulation
+(no LSV leverage) for the pure-SV fit diagnostic."""
 
 import numpy as np
 import pandas as pd
@@ -11,17 +9,13 @@ import pandas as pd
 from pure_sv_config import IV_DIR, MAX_OPTIONS, SEED
 
 
-# =============================================================================
-# Bergomi spot variance
-# =============================================================================
-
 def _alpha_theta(theta, rho12):
     denom = np.sqrt((1 - theta) ** 2 + theta ** 2 + 2 * rho12 * theta * (1 - theta))
     return 1.0 / max(denom, 1e-10)
 
 
 def _chi_t_t(t, kappa1, kappa2, theta, rho12, alpha_th):
-    """Var[x^t_t] under analytical OU moments — used for martingale correction."""
+    """Var[x^t_t] from analytic OU moments; for martingale correction."""
     if t <= 0:
         return 0.0
     var_X1 = (1.0 - np.exp(-2.0 * kappa1 * t)) / (2.0 * kappa1) if kappa1 > 1e-10 else t
@@ -42,7 +36,7 @@ def _spot_variance(X1, X2, t, bergomi, fwd_var_interp, ttm_grid):
     kappa1 = bergomi["kappa1"]
     kappa2 = bergomi["kappa2"]
     rho12 = bergomi["rho12"]
-    omega = 2.0 * nu  # see particle_method.py for empirical justification
+    omega = 2.0 * nu  # see particle_method.py
     alpha_th = _alpha_theta(theta, rho12)
     x_t_t = alpha_th * ((1.0 - theta) * X1 + theta * X2)
     chi_t_t = _chi_t_t(t, kappa1, kappa2, theta, rho12, alpha_th)
@@ -52,9 +46,7 @@ def _spot_variance(X1, X2, t, bergomi, fwd_var_interp, ttm_grid):
     return np.maximum(xi_t_0 * f_val, 1e-8)
 
 
-# =============================================================================
 # Option-pool selection
-# =============================================================================
 
 def select_option_pool(S, r, q, max_options=MAX_OPTIONS, seed=SEED):
     df = pd.read_csv(IV_DIR / "data" / "spx_iv_data.csv")
@@ -83,19 +75,12 @@ def select_option_pool(S, r, q, max_options=MAX_OPTIONS, seed=SEED):
     return df
 
 
-# =============================================================================
 # Pure-Bergomi MC simulation (no LSV leverage)
-# =============================================================================
 
 def simulate_bergomi_no_leverage(S0, r, q, bergomi, fwd_var_interp, ttm_grid,
                                    maturities_required, n_paths, dt, seed):
-    """
-    Simulate Bergomi spot dynamics *without* the LSV leverage function:
-
-        dS/S = (r - q) dt + sqrt(xi^t_t) dW^S
-
-    Snapshot S at each requested maturity. Returns dict {step_idx: S_arr}.
-    """
+    """Bergomi spot dynamics without leverage: dS/S = (r-q)dt + sqrt(xi^t_t)dW^S.
+    Snapshots S at each maturity. Returns (snapshots {step: S_arr}, step_of)."""
     rho1 = bergomi["rho1"]
     rho2 = bergomi["rho2"]
     rho12 = bergomi["rho12"]
@@ -104,7 +89,7 @@ def simulate_bergomi_no_leverage(S0, r, q, bergomi, fwd_var_interp, ttm_grid,
 
     rng = np.random.default_rng(seed)
 
-    # Correlation matrix (regularise eigenvalues)
+    # Correlation matrix, eigenvalue-regularised to PD.
     corr = np.array([
         [1.0,   rho1,  rho2],
         [rho1,  1.0,   rho12],
@@ -122,7 +107,7 @@ def simulate_bergomi_no_leverage(S0, r, q, bergomi, fwd_var_interp, ttm_grid,
     sqrt_dt = np.sqrt(dt_actual)
     t_schedule = np.arange(n_steps + 1) * dt_actual
 
-    # Map each maturity to nearest step index (forward of 0)
+    # Nearest step index per maturity.
     step_of = {T: int(np.argmin(np.abs(t_schedule - T))) for T in maturities_required}
     required_steps = set(step_of.values())
 

@@ -5,23 +5,15 @@ from variance_schemes import step_variance_qe
 
 
 class HestonVariance:
-    """
-    Heston CIR variance process with selectable discretisation scheme.
+    """Heston CIR variance dV = kappa(theta - V)dt + xi sqrt(V) dW^V.
 
-    dV = kappa * (theta - V) * dt + xi * sqrt(V) * dW^V
-
-    Two schemes:
-      - "euler": full-truncation Euler. step(V, dt, Z) advances V given a
-        Brownian increment Z that should be the variance leg of a correlated
-        (Z1, Z2) pair. The simulator does the standard log-Euler S update.
-      - "qe": Andersen 2008 QE. The variance is sampled from the exact CIR
-        conditional law (Case A quadratic-Gaussian or Case B exponential),
-        and the spot is updated via the Broadie-Kaya decomposition that
-        consumes V_old and V_new. The simulator detects scheme=="qe" and
-        calls joint_step instead of step.
+    Schemes: 'euler' (full-truncation Euler; step(V,dt,Z) takes the variance
+    leg of a correlated (Z1,Z2) pair), or 'qe' (Andersen 2008 QE: sample V
+    from the exact CIR conditional law, spot via Broadie-Kaya consuming
+    V_old/V_new). The simulator branches on scheme.
     """
 
-    uses_spot_noise = False   # selects the simulator's variance-noise branch
+    uses_spot_noise = False   # selects simulator's variance-noise branch
 
     def __init__(self, kappa, theta, xi, V0, scheme="qe", rho=None):
         self.kappa = kappa
@@ -29,8 +21,7 @@ class HestonVariance:
         self.xi = xi
         self.V0 = V0
         self.scheme = scheme
-        # rho is required for the QE joint step; the simulator passes it
-        # explicitly if not set here.
+        # Required by the QE joint step (simulator passes it if not set here)
         self.rho = rho
 
     def initial_variance(self, n_paths):
@@ -52,11 +43,8 @@ class HestonVariance:
         return step_variance_qe(V, dt, self.kappa, self.theta, self.xi, Z)
 
     def qe_log_spot_increment(self, V_old, V_new, L, dt, r, q, rho, Z_perp):
-        """
-        Broadie-Kaya log-spot increment given V_old, V_new, leverage L, and an
-        independent standard normal Z_perp. Returns the *increment* to add to
-        log S_t.
-        """
+        """Broadie-Kaya increment to add to log S_t, given V_old, V_new,
+        leverage L, and independent normal Z_perp."""
         V_bar = 0.5 * (V_old + V_new)
         V_bar_pos = np.maximum(V_bar, 0.0)
         drift_corr = V_new - V_old - self.kappa * self.theta * dt + self.kappa * V_bar * dt
@@ -69,19 +57,12 @@ class HestonVariance:
 
 
 class BergomiVariance:
-    """
-    Bergomi two-factor spot variance process for cliquet pricing.
-
-    The spot variance is:
-        xi^t_t = xi^t_0 * exp(omega * x^t_t - omega^2/2 * chi(t,t))
-
-    where x^t_t = alpha_theta * [(1-theta)*X1 + theta*X2]
-    and X1, X2 are OU processes driven by W^1, W^2 correlated with W^S.
-
-    The step() method receives Z_spot (the spot Brownian) and uses internal
-    Cholesky decomposition to produce correlated OU increments.
-
-    Interface matches HestonVariance: step(V, dt, Z) -> V_new.
+    """Bergomi two-factor spot variance:
+        xi^t_t = xi^t_0 * exp(omega * x^t_t - omega^2/2 * chi(t,t)),
+    x^t_t = alpha_theta * [(1-theta)*X1 + theta*X2], X1/X2 OU processes driven
+    by W^1, W^2 correlated with W^S. step() takes Z_spot and produces
+    correlated OU increments via internal Cholesky. Interface matches
+    HestonVariance: step(V, dt, Z) -> V_new.
     """
 
     def __init__(self, nu, theta, kappa1, kappa2, rho1, rho2, rho12,
@@ -93,16 +74,14 @@ class BergomiVariance:
         self.rho1 = rho1
         self.rho2 = rho2
         self.rho12 = rho12
-        # See lsv_bergomi/particle_method.py: omega = 2*nu (empirically
-        # verified; omega = nu produces a systematic ME bias of about -55 bp).
+        # omega = 2*nu (see lsv_bergomi/particle_method.py; omega=nu gives a
+        # systematic ME bias of ~-55 bp).
         self.omega = 2.0 * nu
 
-        # alpha_theta normalisation
         denom = np.sqrt((1 - theta)**2 + theta**2
                         + 2 * rho12 * theta * (1 - theta))
         self.alpha_theta = 1.0 / max(denom, 1e-10)
 
-        # Forward variance interpolator
         self.fwd_var_interp = interpolate.interp1d(
             ttm_grid, fwd_var_curve, kind="linear",
             bounds_error=False, fill_value=(fwd_var_curve[0], fwd_var_curve[-1]),
@@ -116,7 +95,7 @@ class BergomiVariance:
             [rho1,  1.0,   rho12],
             [rho2,  rho12, 1.0],
         ])
-        # Ensure positive-definite (nearest PD fallback)
+        # Nearest-PD fallback
         eigvals = np.linalg.eigvalsh(corr)
         if eigvals.min() < 1e-8:
             from scipy.linalg import sqrtm
@@ -126,11 +105,11 @@ class BergomiVariance:
         self.rng = np.random.default_rng(seed)
         self.X1 = None
         self.X2 = None
-        self.t = 0.0  # current time
+        self.t = 0.0
         self.uses_spot_noise = True  # step() expects Z_spot, not Z_vol
 
     def initial_variance(self, n_paths):
-        """Return initial spot variance xi^0_0 and set up OU states."""
+        """Initial spot variance xi^0_0; also resets OU states."""
         self.X1 = np.zeros(n_paths)
         self.X2 = np.zeros(n_paths)
         self.t = 0.0
@@ -158,29 +137,21 @@ class BergomiVariance:
         return max(chi, 0.0)
 
     def step(self, V, dt, Z_spot):
-        """
-        Advance variance by one time step.
-
-        Z_spot is the spot Brownian increment (standard normal).
-        Correlated OU increments are generated internally via Cholesky.
-        Returns new spot variance xi^t_t at t + dt.
-        """
+        """Advance variance one step; Z_spot is the spot Brownian increment,
+        correlated OU increments built internally via Cholesky. Returns spot
+        variance xi^t_t at t + dt."""
         n = len(V)
 
-        # Generate independent normals and correlate via Cholesky
+        # Derive W^1, W^2 correlated with W^S = Z_spot via the Cholesky factor:
+        # [W^S, W^1, W^2] = chol @ [Z_spot, e2, e3]
         Z_indep = self.rng.standard_normal((n, 2))
-        # W^S is Z_spot; derive W^1, W^2 correlated with it
-        # [W^S, W^1, W^2] = chol @ [e1, e2, e3]
-        # We have Z_spot (= e1 contribution). Need to back-solve:
-        # W^1 = chol[1,0]*Z_spot + chol[1,1]*e2 + chol[1,2]*e3
-        # W^2 = chol[2,0]*Z_spot + chol[2,1]*e2 + chol[2,2]*e3
         Z_W1 = (self.chol[1, 0] * Z_spot
                 + self.chol[1, 1] * Z_indep[:, 0])
         Z_W2 = (self.chol[2, 0] * Z_spot
                 + self.chol[2, 1] * Z_indep[:, 0]
                 + self.chol[2, 2] * Z_indep[:, 1])
 
-        # Exact OU simulation
+        # Exact OU step
         decay1 = np.exp(-self.kappa1 * dt)
         decay2 = np.exp(-self.kappa2 * dt)
         std1 = np.sqrt((1.0 - decay1**2) / (2.0 * self.kappa1)) if self.kappa1 > 1e-10 else np.sqrt(dt)
@@ -190,24 +161,17 @@ class BergomiVariance:
         self.X2 = self.X2 * decay2 + std2 * Z_W2
         self.t += dt
 
-        # Spot variance at new time
         t = self.t
         alpha = self.alpha_theta
         th = self.theta
 
-        # x^t_t: at T=t, decay factors are e^0 = 1
+        # x^t_t (decay factors are 1 at T=t)
         x_t_t = alpha * ((1.0 - th) * self.X1 + th * self.X2)
-
-        # chi(t, t)
         chi_t_t = self._compute_chi(t, t)
-
-        # f_t(t, x) = exp(omega * x - omega^2/2 * chi)
         f_val = np.exp(self.omega * x_t_t - 0.5 * self.omega**2 * chi_t_t)
 
-        # xi^t_0
         t_clamped = np.clip(t, self.ttm_min, self.ttm_max)
         xi_t_0 = max(float(self.fwd_var_interp(t_clamped)), 1e-8)
 
-        # xi^t_t = xi^t_0 * f_t
         V_new = xi_t_0 * f_val
         return np.maximum(V_new, 1e-8)

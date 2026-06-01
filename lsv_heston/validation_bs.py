@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Black-Scholes helpers for LSV validation (Checkpoint 2).
-
-Extracted from lsv_validation.py: bs_call_price, bs_put_price, bs_iv. Imported
-by the lsv_validation facade via `from validation_bs import *`.
-"""
+"""Black-Scholes helpers for LSV validation (Checkpoint 2): call/put price, IV inversion."""
 
 import numpy as np
 from scipy.stats import norm
 
 
-# =============================================================================
-# Black-Scholes helper
-# =============================================================================
+# --- Black-Scholes helpers ---
 
 def bs_call_price(S, K, T, r, q, sigma):
     """Black-Scholes European call price."""

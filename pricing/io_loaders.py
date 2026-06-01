@@ -10,34 +10,23 @@ logger = logging.getLogger(__name__)
 
 
 def load_pricing_inputs():
-    """
-    Load all artifacts needed for cliquet pricing.
-
-    Returns
-    -------
-    dict
-        S, r, q, date, heston params, leverage surface + grids, forward curve.
-    """
-    # Market parameters
+    """Load artifacts for Heston-LSV cliquet pricing: S/r/q, heston params,
+    leverage surface + grids, forward curve, optional Bergomi inputs."""
     with open(DUPIRE_DIR / "data" / "market_params.json") as f:
         mkt = json.load(f)
     S, r, q = mkt["S"], mkt["r"], mkt["q"]
 
-    # Heston parameters
     with open(LSV_DIR / "data" / "heston_params.json") as f:
         heston = json.load(f)
 
-    # Leverage surface
     leverage = np.load(LSV_DIR / "arrays" / "leverage_surface.npy")
     spot_grid = np.load(LSV_DIR / "arrays" / "leverage_spot_grid.npy")
     time_grid = np.load(LSV_DIR / "arrays" / "leverage_time_grid.npy")
 
-    # Forward curve and TTM grid (for discount factors)
     fwd_prices = np.load(IV_DIR / "arrays" / "forward_curve.npy")
     ttm_grid = np.load(IV_DIR / "arrays" / "ttm_grid.npy")
 
-    # Optional Bergomi params + forward variance for the pure-Bergomi baseline
-    # that sits alongside the pure-Heston one. Missing files are tolerated; the
+    # Optional Bergomi inputs for the pure-Bergomi baseline; missing files ->
     # baseline becomes NaN downstream.
     bergomi = None
     fwd_var = None
@@ -64,31 +53,15 @@ def load_pricing_inputs():
         "time_grid": time_grid,
         "fwd_prices": fwd_prices,
         "ttm_grid": ttm_grid,
-        # Optional Bergomi inputs for the pure-Bergomi baseline.
         "bergomi": bergomi,
         "fwd_var": fwd_var,
     }
 
 
 def build_leverage_interpolator(leverage, spot_grid, time_grid):
-    """
-    Build a 2D interpolator for L(t, S).
-
-    Bilinear interpolation on the (spot, time) grid, with values outside the
-    grid clamped to the nearest boundary (no gradient extrapolation), which
-    keeps leverage stable for spot far from S0.
-
-    Parameters
-    ----------
-    leverage : np.ndarray, shape (n_S, n_T)
-    spot_grid : np.ndarray, shape (n_S,)
-    time_grid : np.ndarray, shape (n_T,)
-
-    Returns
-    -------
-    callable
-        L(S_arr, t) -> np.ndarray of leverage values.
-    """
+    """Return callable L(S_arr, t) interpolating leverage(n_S, n_T) bilinearly
+    on the (spot_grid, time_grid). Out-of-grid values clamp to the nearest
+    boundary (no gradient extrapolation), keeping L stable far from S0."""
     interp = interpolate.RegularGridInterpolator(
         (spot_grid, time_grid),
         leverage,
@@ -108,12 +81,8 @@ def build_leverage_interpolator(leverage, spot_grid, time_grid):
 
 
 def load_bergomi_pricing_inputs():
-    """
-    Load artifacts for cliquet pricing under Bergomi LSV.
-
-    Returns dict with same structure as load_pricing_inputs() plus bergomi params
-    and forward variance curve.
-    """
+    """Load artifacts for Bergomi-LSV cliquet pricing: same structure as
+    load_pricing_inputs() plus bergomi params and forward-variance curve."""
     with open(DUPIRE_DIR / "data" / "market_params.json") as f:
         mkt = json.load(f)
     S, r, q = mkt["S"], mkt["r"], mkt["q"]
@@ -129,7 +98,7 @@ def load_bergomi_pricing_inputs():
     ttm_grid = np.load(IV_DIR / "arrays" / "ttm_grid.npy")
     fwd_prices = np.load(IV_DIR / "arrays" / "forward_curve.npy")
 
-    # Also load Heston for baselines
+    # Heston params for baselines
     with open(LSV_DIR / "data" / "heston_params.json") as f:
         heston = json.load(f)
 

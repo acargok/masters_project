@@ -9,24 +9,13 @@ from config import *
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# SECTION 4 — SSVI SURFACE CONSTRUCTION
-# =============================================================================
+# Section 4 — SSVI surface construction
 
 def ssvi_phi(theta: np.ndarray, eta: float, gamma: float) -> np.ndarray:
     """
-    Power-law curvature function (Gatheral & Jacquier 2014):
-
-        φ(θ) = η / (θ^γ · (1 + θ)^{1−γ})
-
-    Parameters
-    ----------
-    theta : ATM total variance  (> 0)
-    eta   : level parameter  η ∈ (0, 2)
-    gamma : power parameter  γ ∈ (0, 0.5)
-
-    Behaviour: φ diverges as θ → 0 (short-maturity skew amplification),
-    which allows the model to reproduce the steep SPX short-dated skew.
+    Power-law curvature (Gatheral & Jacquier 2014):
+    φ(θ) = η / (θ^γ·(1+θ)^{1−γ}),  θ>0 ATM total var, η∈(0,2), γ∈(0,0.5).
+    φ diverges as θ→0, reproducing the steep SPX short-dated skew.
     """
     th = np.maximum(theta, 1e-10)
     return eta / (th ** gamma * (1.0 + th) ** (1.0 - gamma))
@@ -34,25 +23,18 @@ def ssvi_phi(theta: np.ndarray, eta: float, gamma: float) -> np.ndarray:
 
 def ssvi_theta_t(t: np.ndarray, alpha0: float, alpha1: float, alpha2: float) -> np.ndarray:
     """
-    Parametric ATM total variance term structure (Jacquier 2017).
-
-        θ_t = α₀t + α₁(1 − e^{−α₂t})
-
-    Satisfies θ(0) = 0 and is monotone increasing for α₀, α₁, α₂ > 0.
-    The initial slope is α₀ + α₁α₂; the long-run slope is α₀.
+    Parametric ATM total-variance term structure (Jacquier 2017):
+    θ_t = α₀t + α₁(1 − e^{−α₂t}). θ(0)=0, monotone for α>0;
+    initial slope α₀+α₁α₂, long-run slope α₀.
     """
     return alpha0 * t + alpha1 * (1.0 - np.exp(-alpha2 * t))
 
 
 def ssvi_rho_t(t: np.ndarray, p0: float, p1: float, p2: float) -> np.ndarray:
     """
-    Time-varying skew parameter (Jacquier 2017).
-
-        ρ(t) = clip(arctan(p₀t + p₁) + p₂,  −0.999,  0.999)
-
-    Allows the skew to vary across maturities while staying in (−1, 1).
-    For SPX, ρ is typically most negative at short maturities and flattens
-    at long maturities (p₀ > 0).
+    Time-varying skew (Jacquier 2017):
+    ρ(t) = clip(arctan(p₀t + p₁) + p₂, −0.999, 0.999), kept in (−1,1).
+    SPX: most negative at short t, flattening at long t (p₀>0).
     """
     return np.clip(np.arctan(p0 * t + p1) + p2, -0.999, 0.999)
 
@@ -60,19 +42,9 @@ def ssvi_rho_t(t: np.ndarray, p0: float, p1: float, p2: float) -> np.ndarray:
 def ssvi_total_variance(k: np.ndarray, theta: float, phi: float,
                         rho: float) -> np.ndarray:
     """
-    SSVI total implied variance (Gatheral & Jacquier 2014).
-
-    FORMULA:
-        w(k, θ) = (θ/2) · [1 + ρφk + √((φk + ρ)² + 1 − ρ²)]
-
-    where:
-        k   = ln(K/F)          forward log-moneyness
-        θ   = ATM total var    w(0, θ) = θ  (exact, by construction)
-        φ   = φ(θ)             power-law curvature, evaluated at this θ
-        ρ ∈ (−1, 1)            skew  (equity: ρ < 0)
-
-    Note: the at-the-money value is w(0) = θ regardless of φ and ρ, so θ
-    is exactly the ATM total variance — not an approximation.
+    SSVI total implied variance (Gatheral & Jacquier 2014):
+        w(k,θ) = (θ/2)·[1 + ρφk + √((φk+ρ)² + 1 − ρ²)]
+    k=ln(K/F), φ=φ(θ), ρ∈(−1,1) (equity ρ<0). w(0)=θ exactly (ATM total var).
     """
     fk = phi * k
     return (theta / 2.0) * (1.0 + rho * fk + np.sqrt((fk + rho)**2 + 1.0 - rho**2))
@@ -81,14 +53,9 @@ def ssvi_total_variance(k: np.ndarray, theta: float, phi: float,
 def _ssvi_nb_penalty(theta_vals: np.ndarray, eta: float, gamma: float,
                      rho_vals: np.ndarray, weight: float) -> float:
     """
-    Penalty for Gatheral & Jacquier (2014) Theorem 4.2 no-butterfly violations.
-
-    Both conditions must hold at every (θ, ρ) pair in the term structure:
-        C1(t) = θ(t) · φ(θ(t)) · (1 + |ρ(t)|) ≤ 4
-        C2(t) = θ(t) · φ(θ(t))² · (1 + |ρ(t)|) ≤ 4
-
-    rho_vals : np.ndarray, per-slice ρ(T) values.
-    Returns the sum of squared exceedances multiplied by `weight`.
+    Penalty for G&J (2014) Thm 4.2 no-butterfly violations. At every slice:
+        C1 = θ·φ(θ)·(1+|ρ|) ≤ 4,  C2 = θ·φ(θ)²·(1+|ρ|) ≤ 4.
+    Returns weight × sum of squared exceedances.
     """
     phi_vals = ssvi_phi(theta_vals, eta, gamma)
     abs_rho = np.abs(rho_vals)
@@ -100,15 +67,9 @@ def _ssvi_nb_penalty(theta_vals: np.ndarray, eta: float, gamma: float,
 
 def _ssvi_transform(x: np.ndarray, n_slices: int) -> tuple:
     """
-    Transform the unconstrained optimisation vector to SSVI parameters.
-
-    Layout: x = [log_η, logit_γ, p₀, p₁, p₂, log_θ₁, …, log_θₙ]
-
-    Transforms (guarantee structural constraints automatically):
-        η    = exp(log_η)               → η > 0
-        γ    = 0.5·sigmoid(logit_γ)     → γ ∈ (0, 0.5)
-        p₀, p₁, p₂  unconstrained      → ρ(t) = clip(arctan(p₀t+p₁)+p₂)
-        θᵢ   = exp(log_θᵢ)             → θᵢ > 0  (per-slice ATM total var)
+    Map unconstrained vector x = [log_η, logit_γ, p₀, p₁, p₂, log_θ₁…log_θₙ]
+    to SSVI params: η=exp(log_η)>0, γ=0.5·sigmoid(logit_γ)∈(0,0.5),
+    p₀,p₁,p₂ free, θᵢ=exp(log_θᵢ)>0 (per-slice ATM total var).
     """
     log_eta, logit_gamma = x[0], x[1]
     p0, p1, p2 = x[2], x[3], x[4]
@@ -121,10 +82,8 @@ def _ssvi_transform(x: np.ndarray, n_slices: int) -> tuple:
 
 def _ssvi_objective_fn(x: np.ndarray, slices: list, penalty_weight: float) -> float:
     """
-    Joint SSVI objective: weighted MSE across all slices + no-butterfly penalty.
-
-    slices : list of (ttm, k_data, w_data, weights) tuples.
-    Uses per-slice θ and the Jacquier time-varying ρ(t) term structure.
+    Joint SSVI objective: weighted MSE over slices + no-butterfly penalty.
+    slices: list of (ttm, k_data, w_data, weights); per-slice θ and ρ(t).
     """
     n_slices = len(slices)
     eta, gamma, p0, p1, p2, theta_arr = _ssvi_transform(x, n_slices)
@@ -147,30 +106,14 @@ def _ssvi_objective_fn(x: np.ndarray, slices: list, penalty_weight: float) -> fl
 
 def fit_ssvi_surface(slice_data: list) -> dict:
     """
-    Jointly fit SSVI w(k,θ) = (θ/2)[1 + ρ(t)φk + √((φk+ρ(t))²+1−ρ(t)²)] using:
+    Jointly fit SSVI w(k,θ)=(θ/2)[1+ρ(t)φk+√((φk+ρ(t))²+1−ρ(t)²)] with
+    per-slice θ(T), φ(θ)=η/(θ^γ(1+θ)^{1−γ}), ρ(t)=clip(arctan(p₀t+p₁)+p₂).
+    Shared η,γ,p₀,p₁,p₂ plus per-slice θ₁…θₙ (5+n params); no-butterfly
+    (G&J Thm 4.2) enforced as a penalty.
 
-        θ(T)   per-slice free parameters (one per expiry)  — observed ATMF total var
-        φ(θ)   = η / (θ^γ · (1 + θ)^{1−γ})               power-law curvature (G&J 2014)
-        ρ(t)   = clip(arctan(p₀t + p₁) + p₂)              time-varying skew (Jacquier 2017)
-
-    Shared parameters: η, γ, p₀, p₁, p₂  (5 scalars).
-    Per-slice parameters: θ₁, …, θₙ  (n scalars).
-    Total: 5 + n parameters.  No-butterfly conditions (G&J 2014 Thm 4.2) are
-    enforced as a penalty during optimisation.
-
-    Parameters
-    ----------
-    slice_data : list of dict
-        Each element has keys 'ttm', 'expiry', 'k_data', 'w_data'.
-        Must be sorted by TTM ascending.
-
-    Returns
-    -------
-    dict
-        Keys: 'eta', 'gamma', 'p0', 'p1', 'p2',
-              'theta' (per-slice, shape n), 'rho' (per-slice, shape n),
-              'ttm' (shape n), 'rmse_per_slice' (shape n),
-              'overall_rmse', 'nb_conditions_ok', 'c1_max', 'c2_max', 'success'.
+    slice_data: dicts with 'ttm','expiry','k_data','w_data', sorted by TTM.
+    Returns dict: eta, gamma, p0, p1, p2, theta/rho/ttm/rmse_per_slice
+    (per-slice), overall_rmse, nb_conditions_ok, c1_max, c2_max, success.
     """
     n_slices = len(slice_data)
     if n_slices < 3:
@@ -187,13 +130,13 @@ def fit_ssvi_surface(slice_data: list) -> dict:
         wt /= wt.sum()
         slices.append((s["ttm"], k_data, w_data, wt))
 
-    # ── Initial per-slice θ: ATMF total variance for each slice ──
+    # Initial per-slice θ: ATMF total variance
     theta_init = np.zeros(n_slices)
     for i, s in enumerate(slice_data):
         idx_atm = int(np.argmin(np.abs(s["k_data"])))
         theta_init[i] = max(float(s["w_data"][idx_atm]), 1e-4)
 
-    # ── Adaptive penalty weight ──
+    # Adaptive penalty weight (scaled by the initial MSE)
     _eta0, _gamma0, _rho0 = 1.0, 0.3, -0.7
     _init_mse = 0.0
     for i, s in enumerate(slice_data):
@@ -204,30 +147,30 @@ def fit_ssvi_surface(slice_data: list) -> dict:
     adaptive_penalty = SSVI_NB_PENALTY * _init_mse
     logger.debug(f"  SSVI penalty: init_mse={_init_mse:.2e}  weight={adaptive_penalty:.2e}")
 
-    # logit(γ/0.5) for γ=0.3 → ln(0.6/0.4) ≈ 0.405
+    # logit(γ/0.5) for γ=0.3
     _logit_gamma0 = np.log(0.3 / (0.5 - 0.3))
 
-    # Initial parameter vector: [log_η, logit_γ, p₀, p₁, p₂, log_θ₁, …, log_θₙ]
+    # x0 = [log_η, logit_γ, p₀, p₁, p₂, log_θ₁…log_θₙ]
     x0 = np.concatenate([
-        [np.log(1.0),      # log_η   → η = 1.0
-         _logit_gamma0,    # logit_γ → γ = 0.3
-         0.0,              # p₀ = 0  (flat ρ to start)
+        [np.log(1.0),      # η = 1.0
+         _logit_gamma0,    # γ = 0.3
+         0.0,              # p₀ = 0 (flat ρ to start)
          0.0,              # p₁ = 0
-         -0.7],            # p₂ → ρ ≈ arctan(0)+(-0.7) = -0.7
-        np.log(theta_init),           # log_θᵢ  (per-slice ATM total var)
+         -0.7],            # p₂ → ρ ≈ -0.7
+        np.log(theta_init),
     ])
 
-    # Bounds on the transformed variables
+    # Bounds on transformed variables
     bounds = (
         [(-3.0,  1.0)]        # log_η   : η ∈ (0.05, 2.72)
-        + [(-10., 10.)]       # logit_γ : γ ∈ (0, 0.5) via sigmoid
+        + [(-10., 10.)]       # logit_γ : γ ∈ (0, 0.5)
         + [(-3.0, 3.0)]       # p₀
         + [(-5.0, 5.0)]       # p₁
-        + [(-2.0, 0.5)]       # p₂  (equity: ρ < 0)
+        + [(-2.0, 0.5)]       # p₂  (equity ρ < 0)
         + [(-8.0, 0.0)] * n_slices   # log_θᵢ : θ ∈ (3e-4, 1.0)
     )
 
-    # ── Stage 1: Differential evolution (global search) ──
+    # Stage 1: differential evolution (global search)
     best_result = None
     try:
         res_de = optimize.differential_evolution(
@@ -245,7 +188,7 @@ def fit_ssvi_surface(slice_data: list) -> dict:
     except Exception as exc:
         logger.warning(f"  SSVI DE failed: {exc}")
 
-    # ── Stage 2: L-BFGS-B local refinement ──
+    # Stage 2: L-BFGS-B local refinement
     x_start = best_result.x if best_result is not None else x0
     try:
         res_lb = optimize.minimize(
@@ -270,7 +213,7 @@ def fit_ssvi_surface(slice_data: list) -> dict:
     # Per-slice ρ from parametric form
     rho_vals = ssvi_rho_t(ttms, p0, p1, p2)
 
-    # ── Per-slice RMSE ──
+    # Per-slice RMSE
     rmse_per_slice = np.zeros(n_slices)
     for i, s in enumerate(slice_data):
         phi_i  = float(ssvi_phi(np.array([theta_vals[i]]), eta, gamma)[0])
@@ -278,7 +221,7 @@ def fit_ssvi_surface(slice_data: list) -> dict:
         rmse_per_slice[i] = float(np.sqrt(np.mean((w_fit - s["w_data"]) ** 2)))
     overall_rmse = float(np.sqrt(np.mean(rmse_per_slice ** 2)))
 
-    # ── Verify no-butterfly conditions ──
+    # Verify no-butterfly conditions
     phi_vec = ssvi_phi(theta_vals, eta, gamma)
     abs_rho_vec = np.abs(rho_vals)
     c1_max = float(np.max(theta_vals * phi_vec * (1.0 + abs_rho_vec)))
@@ -323,14 +266,8 @@ def fit_ssvi_surface(slice_data: list) -> dict:
 
 def enforce_calendar_arbitrage(total_var_surface: np.ndarray) -> np.ndarray:
     """
-    Enforce no-calendar-spread arbitrage: w(k, T₁) ≤ w(k, T₂) for T₁ < T₂.
-
-    METHODOLOGY: Sweep from the earliest to the latest maturity.  At each
-    TTM index j, ensure w[:, j] ≥ w[:, j-1] pointwise.  Where violated,
-    set w[:, j] = w[:, j-1] (flat-forward total variance).
-
-    This is a simple projection that preserves the per-slice smile shape
-    while guaranteeing monotonicity.
+    Enforce no-calendar-arb w(k,T₁) ≤ w(k,T₂) for T₁<T₂: sweep T ascending,
+    set w[:,j] = max(w[:,j], w[:,j-1]). Preserves smile shape (monotone projection).
     """
     w = total_var_surface.copy()
     n_violations = 0
@@ -348,37 +285,17 @@ def build_iv_surface(df: pd.DataFrame, fwd_df: pd.DataFrame,
                      ttm_grid_size: int = TTM_GRID_SIZE,
                      moneyness_grid_size: int = MONEYNESS_GRID_SIZE) -> tuple:
     """
-    Build the IV surface via a joint SSVI fit.
+    Build the IV surface via a joint SSVI fit:
+      1. Collect (k, w) per slice (≥ MIN_OPTIONS_PER_SLICE options).
+      2. Joint SSVI fit (shared η,γ,p₀,p₁,p₂; per-slice θ; ρ(T) parametric;
+         no-butterfly penalty).
+      3. Evaluate on the (k,T) grid; θ(T) via PCHIP, ρ(T) analytic.
+      4. Calendar-arb safety net.  5. σ(k,T)=√(w/T).
 
-    Steps:
-      1. For each expiry slice with ≥ MIN_OPTIONS_PER_SLICE options, collect
-         (k, w) pairs in forward log-moneyness × total variance space.
-      2. Jointly fit SSVI  w(k,θ) = (θ/2)[1 + ρφk + √((φk+ρ)²+1−ρ²)]
-         with power-law φ(θ) = η/(θ^γ·(1+θ)^(1−γ)).  Shared parameters
-         η, γ, p₀, p₁, p₂; per-slice θ(T); ρ(T) = clip(arctan(p₀T+p₁)+p₂).
-         No-butterfly conditions (G&J 2014 Thm 4.2) are enforced as a penalty
-         during fitting.
-      3. Evaluate SSVI on the (k, T) grid (analytically smooth, no smoothing
-         step).
-      4. Enforce calendar-spread arbitrage as a safety net for grid rounding.
-      5. Convert to IV: σ(k, T) = √(w(k, T) / T).
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Options with columns: strike, expiry, ttm, moneyness, iv.
-    fwd_df : pd.DataFrame
-        Per-expiry forwards from compute_implied_forwards().
-
-    Returns
-    -------
-    ttm_grid : np.ndarray, shape (ttm_grid_size,)
-    log_m_grid : np.ndarray, shape (moneyness_grid_size,)
-        Forward log-moneyness k = ln(K/F).
-    iv_surface : np.ndarray, shape (moneyness_grid_size, ttm_grid_size)
-    total_var_surface : np.ndarray, shape (moneyness_grid_size, ttm_grid_size)
-    ssvi_params_df : pd.DataFrame
-        Per-slice θ(T) and ρ(T) plus the shared scalars η, γ, p₀, p₁, p₂.
+    df has strike, expiry, ttm, moneyness, iv; fwd_df from
+    compute_implied_forwards(). k = ln(K/F).
+    Returns (ttm_grid, log_m_grid, iv_surface, total_var_surface,
+    ssvi_params_df). Surfaces shaped (moneyness_grid_size, ttm_grid_size).
     """
     fwd_map = dict(zip(fwd_df["expiry"], fwd_df["forward"]))
 
@@ -387,7 +304,7 @@ def build_iv_surface(df: pd.DataFrame, fwd_df: pd.DataFrame,
     df["fwd_log_m"] = np.log(df["strike"] / df["forward"])
     df["total_var"] = df["iv"]**2 * df["ttm"]
 
-    # ── Step 1: collect per-slice data ──
+    # Step 1: collect per-slice data
     sorted_expiries = sorted(df["expiry"].unique(),
                              key=lambda e: df[df["expiry"] == e]["ttm"].iloc[0])
 
@@ -423,7 +340,7 @@ def build_iv_surface(df: pd.DataFrame, fwd_df: pd.DataFrame,
             f"Cannot fit SSVI (need ≥ 3)."
         )
 
-    # ── Step 2: joint SSVI fit ──
+    # Step 2: joint SSVI fit
     ssvi_result = fit_ssvi_surface(slice_data)
     if not ssvi_result["success"]:
         raise RuntimeError("SSVI joint fit failed — check data quality.")
@@ -435,14 +352,12 @@ def build_iv_surface(df: pd.DataFrame, fwd_df: pd.DataFrame,
     rho_vals   = ssvi_result["rho"]
     ttm_vals   = ssvi_result["ttm"]
 
-    # ── Step 3: grid construction ──
-    # k-grid: use explicit bounds if set, else fall back to data percentiles.
+    # Step 3: grid construction (explicit bounds if set, else data-derived)
     fwd_lm = df["fwd_log_m"].values
     lm_min = GRID_K_MIN if GRID_K_MIN is not None else float(np.percentile(fwd_lm, 2))
     lm_max = GRID_K_MAX if GRID_K_MAX is not None else float(np.percentile(fwd_lm, 98))
     log_m_grid = np.linspace(lm_min, lm_max, moneyness_grid_size)
 
-    # TTM grid: use explicit bounds if set, else use observed option TTM range.
     ttm_min = GRID_T_MIN if GRID_T_MIN is not None else float(ttm_vals.min())
     ttm_max = GRID_T_MAX if GRID_T_MAX is not None else float(ttm_vals.max())
     ttm_grid = np.linspace(ttm_min, ttm_max, ttm_grid_size)
@@ -452,10 +367,8 @@ def build_iv_surface(df: pd.DataFrame, fwd_df: pd.DataFrame,
     logger.info(f"Grid T-range: [{ttm_min:.4f}, {ttm_max:.4f}]  "
                 f"(observed TTMs: [{float(ttm_vals.min()):.4f}, {float(ttm_vals.max()):.4f}])")
 
-    # ── Step 4: evaluate SSVI on the grid ──
-    # θ(T): PCHIP interpolation of the per-slice values onto the fine TTM grid.
-    # PCHIP preserves local monotonicity, avoiding spurious oscillations.
-    # ρ(T): evaluated analytically from the parametric form.
+    # Step 4: evaluate SSVI on the grid.
+    # θ(T) via PCHIP (monotone, no spurious oscillation); ρ(T) analytic.
     from scipy.interpolate import PchipInterpolator
     _theta_interp = PchipInterpolator(ttm_vals, theta_vals, extrapolate=True)
     theta_on_grid = np.maximum(_theta_interp(ttm_grid), 1e-8)
@@ -469,10 +382,10 @@ def build_iv_surface(df: pd.DataFrame, fwd_df: pd.DataFrame,
         )
     total_var_surface = np.maximum(total_var_surface, 1e-8)
 
-    # ── Step 5: calendar-spread arbitrage (safety net) ──
+    # Step 5: calendar-arb safety net
     total_var_surface = enforce_calendar_arbitrage(total_var_surface)
 
-    # ── Step 6: convert to IV ──
+    # Step 6: convert to IV
     TTM_broadcast = ttm_grid[np.newaxis, :]
     iv_surface = np.sqrt(total_var_surface / TTM_broadcast)
     iv_surface = np.clip(iv_surface, 0.01, 3.0)
@@ -484,7 +397,7 @@ def build_iv_surface(df: pd.DataFrame, fwd_df: pd.DataFrame,
         f"IV [{iv_surface.min():.3f}, {iv_surface.max():.3f}]"
     )
 
-    # ── Build ssvi_params_df ──
+    # Build ssvi_params_df
     ssvi_records = []
     for i, s in enumerate(slice_data):
         phi_i = float(ssvi_phi(np.array([theta_vals[i]]), eta, gamma)[0])

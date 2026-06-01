@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LSV Model — Full Pipeline Runner
-================================
-Part of an LSV (Local Stochastic Volatility) model for pricing Asian options.
-Master's Thesis, Imperial College London.
+LSV full-pipeline runner (Master's Thesis, Imperial College London).
 
-Runs the Step 3 pipeline:
-    3a) Heston calibration
-    3b) Particle method for leverage function L(t, S)
-    Checkpoint 2) LSV validation via MC repricing
-
-Convergence-analysis parameters (Chapter 4) are centralised at module level.
+LSV (Local Stochastic Volatility) model for Asian options. Step 3 pipeline:
+3a Heston calibration, 3b particle method for L(t,S), Checkpoint 2 MC-repricing
+validation. Convergence-analysis params (Chapter 4) are module-level.
 
 Usage:
-    python run_lsv.py                   # full pipeline with defaults
-    python run_lsv.py --particles 10000 # override N
-    python run_lsv.py --skip-heston     # reuse existing Heston params
+    python run_lsv_heston.py                   # full pipeline, defaults
+    python run_lsv_heston.py --particles 10000 # override N
+    python run_lsv_heston.py --skip-heston     # reuse existing Heston params
 """
 
 import argparse
@@ -32,13 +26,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_lsv")
 
-# Parameters varied in the convergence analysis; override via CLI arguments.
-N_PARTICLES = 5_000              # number of particles
-DT = 1.0 / 252.0                # daily time step
-BANDWIDTH_OVERRIDE = None        # None = Silverman's rule; set float to override
-MAX_CALIBRATION_OPTIONS = 500    # Heston calibration: max options
-MC_VALIDATION_PATHS = 100_000   # MC repricing: number of paths
-MC_VALIDATION_OPTIONS = 200      # MC repricing: number of options (0 = all)
+# Convergence-analysis params (override via CLI).
+N_PARTICLES = 5_000
+DT = 1.0 / 252.0                # daily
+BANDWIDTH_OVERRIDE = None        # None = Silverman; float overrides
+MAX_CALIBRATION_OPTIONS = 500    # Heston calibration cap
+MC_VALIDATION_PATHS = 100_000
+MC_VALIDATION_OPTIONS = 200      # 0 = all
 SEED = 42
 
 
@@ -77,7 +71,7 @@ def main():
     logger.info(f"  Seed:        {args.seed}")
     logger.info("=" * 70)
 
-    # ---- Step 3a: Heston calibration ----
+    # Step 3a: Heston calibration
     if not args.skip_heston:
         logger.info("")
         logger.info(">>> STEP 3a: Heston Calibration")
@@ -87,7 +81,7 @@ def main():
     else:
         logger.info(">>> Skipping Step 3a (--skip-heston)")
 
-    # ---- Step 3b: Particle method ----
+    # Step 3b: Particle method
     t_particles = time.time()
     if not args.skip_particles:
         logger.info("")
@@ -103,7 +97,7 @@ def main():
     else:
         logger.info(">>> Skipping Step 3b (--skip-particles)")
 
-    # ---- Checkpoint 2: Validation ----
+    # Checkpoint 2: Validation
     t_val = time.time()
     logger.info("")
     logger.info(">>> CHECKPOINT 2: LSV Validation")
@@ -115,7 +109,7 @@ def main():
     )
     logger.info(f">>> Checkpoint 2 complete in {time.time() - t_val:.1f}s")
 
-    # ---- Summary ----
+    # Summary
     total_time = time.time() - t_start
     logger.info("")
     logger.info("=" * 70)

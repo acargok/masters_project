@@ -14,20 +14,11 @@ from ssvi import ssvi_total_variance
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# SECTION 5 — PLOTTING
-# =============================================================================
+# Section 5 — Plotting
 
 def plot_iv_surface(ttm_grid: np.ndarray, log_m_grid: np.ndarray,
                     iv_surface: np.ndarray, S: float) -> None:
-    """
-    3D IV surface plot.
-
-    AXES:
-      X — forward log-moneyness  k = ln(K/F)
-      Y — time to maturity T (years)
-      Z — implied volatility σ
-    """
+    """3D IV surface: X=k=ln(K/F), Y=T (years), Z=σ."""
     TTM_mesh, LM_mesh = np.meshgrid(ttm_grid, log_m_grid)
 
     fig = plt.figure(figsize=(14, 9))
@@ -55,9 +46,7 @@ def plot_iv_surface(ttm_grid: np.ndarray, log_m_grid: np.ndarray,
 
 
 def plot_iv_smiles(df: pd.DataFrame, fwd_df: pd.DataFrame) -> None:
-    """
-    IV smiles by expiry in forward log-moneyness space.
-    """
+    """IV smiles by expiry in forward log-moneyness space."""
     fwd_map = dict(zip(fwd_df["expiry"], fwd_df["forward"]))
     expiries = sorted(df["expiry"].unique())
     colours = plt.cm.viridis(np.linspace(0, 1, len(expiries)))
@@ -83,12 +72,8 @@ def plot_iv_smiles(df: pd.DataFrame, fwd_df: pd.DataFrame) -> None:
 
 def plot_ssvi_fit(df: pd.DataFrame, fwd_df: pd.DataFrame,
                   ssvi_params_df: pd.DataFrame) -> None:
-    """
-    Overlay SSVI fit on market data per slice (diagnostic).
-    Shows up to 12 expiries in a 3×4 grid.  Each panel plots the joint
-    SSVI curve (using the per-slice θ and the shared η, γ, ρ) against the
-    market total-variance points.
-    """
+    """Overlay SSVI fit on market total variance per slice (up to 12 expiries,
+    4-col grid); per-slice θ with shared η, γ, ρ."""
     fwd_map = dict(zip(fwd_df["expiry"], fwd_df["forward"]))
 
     n_plot = min(12, len(ssvi_params_df))

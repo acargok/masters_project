@@ -8,18 +8,12 @@ from config import *
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# SECTION 2 — DATA CLEANING
-# =============================================================================
+# Section 2 — Data cleaning
 
 def filter_liquidity(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Remove illiquid options: OI, bid-ask spread, moneyness, mid > 0.
-
-    The 20% bid-ask spread tolerance (MAX_BID_ASK_SPREAD_PCT=0.20) is
-    permissive for SPX (typical spread ≈ 2–5% of mid for liquid strikes) while
-    removing stale quotes. If the market is closed (all bids = 0), the bid/ask
-    filters are skipped rather than dropping all data.
+    Remove illiquid options by OI, bid-ask spread, moneyness, and mid > 0.
+    Bid/ask filters are skipped if the market is closed (all bids = 0).
     """
     n0 = len(df)
     df = df[df["openInterest"] >= MIN_OPEN_INTEREST].copy()
@@ -69,35 +63,14 @@ def filter_no_arbitrage(df: pd.DataFrame, S: float, r: float, q: float) -> pd.Da
 def compute_implied_forwards(df: pd.DataFrame, S: float, r: float,
                              q_fallback: float) -> pd.DataFrame:
     """
-    Infer per-expiry forward prices from put-call parity.
+    Infer per-expiry forwards from put-call parity.
 
-    METHODOLOGY: For each expiry, pair calls and puts at the same strike
-    within a near-ATM band (|K/S − 1| < NEAR_ATM_BAND).  Then:
+    Per expiry, pair near-ATM calls/puts (|K/F−1| < band):
+    F = K + e^{rT}(C−P), take median F; q_eff(T) = r − ln(F/S)/T.
+    < 2 pairs → fallback F = S·e^{(r−q)T} with constant q_fallback.
 
-        F = K + exp(r·T) · (C_mid − P_mid)
-
-    Take the median F across strikes (robust to outlier pairs).  Compute
-    the effective continuously-compounded dividend yield:
-
-        q_eff(T) = r − ln(F/S) / T
-
-    For expiries with insufficient pairs (< 2), fall back to F = S·exp((r−q)T)
-    using the constant dividend yield.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        MUST contain both calls and puts (run BEFORE OTM filtering).
-    S, r : float
-        Spot price and risk-free rate.
-    q_fallback : float
-        Constant dividend yield used as fallback.
-
-    Returns
-    -------
-    pd.DataFrame
-        Columns: expiry, ttm, forward, q_eff, n_pairs.
-        One row per expiry (including fallback rows).
+    df must contain both calls and puts (run BEFORE OTM filtering).
+    Returns one row per expiry: expiry, ttm, forward, q_eff, n_pairs.
     """
     records = []
     for expiry, grp in df.groupby("expiry"):
@@ -139,28 +112,13 @@ def filter_option_type_forward(
         fwd_df: pd.DataFrame,
         calls_only: bool = False) -> pd.DataFrame:
     """
-    Keep only the options used to build the IV surface.
+    Keep the options used to build the IV surface.
 
-    Two modes controlled by ``calls_only``:
+    calls_only=False (default): forward-based OTM filter — OTM calls (K≥F)
+    and OTM puts (K<F); forward gives a cleaner ATM boundary than spot.
+    calls_only=True: keep all calls (OTM+ITM), drop puts.
 
-    calls_only=False (default) — OTM filter (forward-based)
-        Keep OTM calls (K ≥ F) and OTM puts (K < F).  This is the standard
-        market convention for index option surfaces: the forward accounts for
-        dividends and financing, giving a cleaner ATM boundary than spot.
-
-    calls_only=True — calls only (OTM and ITM)
-        Keep every call regardless of moneyness.  Useful when put liquidity
-        is poor or when you want to calibrate purely from call prices.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Option chain (must have 'expiry', 'strike', 'option_type').
-    fwd_df : pd.DataFrame
-        Forward table from compute_implied_forwards() (has 'expiry', 'forward').
-    calls_only : bool
-        If True, keep all calls (OTM + ITM) and drop all puts.
-        If False (default), keep OTM options only (forward-based).
+    fwd_df is the forward table from compute_implied_forwards().
     """
     n0 = len(df)
 

@@ -33,7 +33,7 @@ HERE        = Path(__file__).resolve().parent          # iv_surface/
 ROOT        = HERE.parent
 IV_DIR      = HERE
 DUPIRE_DIR  = ROOT / "dupire_vol"
-LSV_DIR     = ROOT / "lsv"
+LSV_DIR     = ROOT / "lsv_heston"
 BERGOMI_DIR = ROOT / "lsv_bergomi"
 OUT_DIR     = HERE / "results_4.3_plots"
 OUT_DIR.mkdir(parents=True, exist_ok=True)

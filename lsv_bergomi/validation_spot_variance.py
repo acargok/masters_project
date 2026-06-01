@@ -5,10 +5,6 @@
 import numpy as np
 
 
-# =============================================================================
-# Bergomi spot variance computation (for MC validation)
-# =============================================================================
-
 def _compute_alpha_theta(theta_param, rho12):
     denom = np.sqrt((1 - theta_param)**2 + theta_param**2 + 2 * rho12 * theta_param * (1 - theta_param))
     return 1.0 / max(denom, 1e-10)
@@ -29,14 +25,14 @@ def _compute_chi(t, T, kappa1, kappa2, theta_param, rho12, alpha_theta):
 
 
 def _spot_variance(X1, X2, t, bergomi, fwd_var_interp, ttm_grid):
-    """Compute xi^t_t for arrays of particles."""
+    """xi^t_t for particle arrays."""
     nu = bergomi["nu"]
     theta = bergomi["theta"]
     kappa1 = bergomi["kappa1"]
     kappa2 = bergomi["kappa2"]
     rho12 = bergomi["rho12"]
-    # See particle_method.py for empirical justification: omega = 2*nu.
-    omega = 2.0 * nu
+    omega = 2.0 * nu   # omega = 2*nu; see particle_method.py
+
     alpha_th = _compute_alpha_theta(theta, rho12)
 
     x_t_t = alpha_th * ((1.0 - theta) * X1 + theta * X2)

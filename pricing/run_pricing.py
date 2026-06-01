@@ -2,26 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 Cliquet Pricing — Main Runner
-================================
-Part of an LSV (Local Stochastic Volatility) model for pricing Asian options.
-Master's Thesis, Imperial College London.
-
-Runs the cliquet pricing step under both Heston LSV and Bergomi LSV:
-    1) Accumulator cliquet (cap=1%, floor=0%)
-    2) Reverse cliquet (coupon=15%)
-    3) Napoleon cliquet (coupon=8%)
-
-All three use monthly resets, 1-year maturity, real forward curve and
-discount factors from saved data.
+=============================
+Runs the cliquet pricing step under both Heston LSV and Bergomi LSV for three
+payoffs (accumulator cap=1%/floor=0%, reverse cliquet coupon=15%, napoleon
+coupon=8%), all monthly resets / 1-year maturity using saved forward and
+discount data.
 
 Usage:
-    python run_pricing.py
-    python run_pricing.py --paths 1000000
-    python run_pricing.py --skip-accumulator --skip-reverse
-    python run_pricing.py --skip-bergomi
+    python run_pricing.py [--paths N] [--skip-{accumulator,reverse,napoleon,bergomi,heston}]
 """
 
-# ===== IMPORTS =====
 import argparse
 import json
 import logging
@@ -31,7 +21,6 @@ from pathlib import Path
 
 import numpy as np
 
-# ===== LOGGING =====
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -39,18 +28,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_pricing")
 
-# ===== PATHS =====
+# Paths
 PRICING_DIR = Path(__file__).resolve().parent
 DATA_DIR = PRICING_DIR / "data"
 ARRAY_DIR = PRICING_DIR / "arrays"
 for _d in (DATA_DIR, ARRAY_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
-# ===== TOP-LEVEL PARAMETERS =====
+# Defaults
 N_PATHS = 500_000
 DT_MAX = 1.0 / 52.0    # weekly sub-stepping
 SEED = 42
-N_SAMPLE_PATHS = 200    # sample paths saved for explorer diagnostics
+N_SAMPLE_PATHS = 200    # sample paths saved for explorer
 
 
 def main():
@@ -80,7 +69,6 @@ def main():
                 f"{'  +  Bergomi LSV' if not args.skip_bergomi else ''}")
     logger.info("=" * 70)
 
-    # Add pricing dir to path for imports
     sys.path.insert(0, str(PRICING_DIR))
     import pricing_engine as pe
 
@@ -93,7 +81,6 @@ def main():
          args.skip_napoleon),
     ]
 
-    # Results container
     results_summary = {
         "n_paths": args.paths,
         "dt_max": DT_MAX,
@@ -104,9 +91,7 @@ def main():
         "bergomi_options": {},
     }
 
-    # ================================================================
     # Phase 1: Heston LSV
-    # ================================================================
     if not args.skip_heston:
         logger.info("")
         logger.info("=" * 70)
@@ -138,7 +123,6 @@ def main():
             elapsed = time.time() - t_opt
             logger.info(f">>> {name} (Heston) complete in {elapsed:.1f}s")
 
-            # Save per-path data
             np.save(ARRAY_DIR / f"{name}_payoffs.npy", result["payoffs"])
             np.save(ARRAY_DIR / f"{name}_returns.npy", result["returns"])
             np.save(ARRAY_DIR / f"{name}_S_resets.npy", result["S_resets"])
@@ -175,9 +159,7 @@ def main():
                 "pct_zero": float((result["payoffs"] == 0).mean() * 100),
             }
 
-    # ================================================================
     # Phase 2: Bergomi LSV
-    # ================================================================
     if not args.skip_bergomi:
         logger.info("")
         logger.info("=" * 70)
@@ -209,7 +191,6 @@ def main():
             elapsed = time.time() - t_opt
             logger.info(f">>> {name} (Bergomi) complete in {elapsed:.1f}s")
 
-            # Save per-path data with bergomi_ prefix
             np.save(ARRAY_DIR / f"bergomi_{name}_payoffs.npy", result["payoffs"])
             np.save(ARRAY_DIR / f"bergomi_{name}_returns.npy", result["returns"])
             np.save(ARRAY_DIR / f"bergomi_{name}_S_resets.npy", result["S_resets"])
@@ -247,20 +228,17 @@ def main():
                 "pct_zero": float((result["payoffs"] == 0).mean() * 100),
             }
 
-    # An "options" key aliases the Heston results (Bergomi if no Heston).
+    # "options" aliases Heston results (or Bergomi if no Heston).
     if results_summary["heston_options"]:
         results_summary["options"] = results_summary["heston_options"]
     elif results_summary["bergomi_options"]:
         results_summary["options"] = results_summary["bergomi_options"]
 
-    # Save summary
     with open(DATA_DIR / "pricing_results.json", "w") as f:
         json.dump(results_summary, f, indent=2)
     logger.info(f"\nSaved pricing results -> {DATA_DIR / 'pricing_results.json'}")
 
-    # ================================================================
-    # Print comparison table
-    # ================================================================
+    # Comparison table
     total_time = time.time() - t_start
     logger.info("")
     logger.info("=" * 90)

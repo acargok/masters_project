@@ -10,64 +10,43 @@ from config import *
 logger = logging.getLogger(__name__)
 
 
-# ===========================================================================
-# SECTION 3: TOTAL VARIANCE PARTIAL DERIVATIVES
-# ===========================================================================
+# SECTION 3: Total variance partial derivatives
 
 def compute_tv_derivatives(
         w: np.ndarray,
         k_grid: np.ndarray,
         T_grid: np.ndarray) -> tuple:
     """
-    Compute partial derivatives of the total variance surface w(k, T).
+    Finite-difference partials of the total variance surface w(k, T).
 
-    Both grids are uniform, so all finite differences use constant spacing.
-    Interior points use second-order central differences; boundaries use
-    first-order one-sided differences.
-
-    Parameters
-    ----------
-    w : np.ndarray, shape (n_k, n_T)
-        Total variance surface.
-    k_grid : np.ndarray, shape (n_k,)
-        Uniform forward log-moneyness grid.
-    T_grid : np.ndarray, shape (n_T,)
-        Uniform TTM grid.
-
-    Returns
-    -------
-    dw_dT : np.ndarray, shape (n_k, n_T)
-        ∂w/∂T — should be ≥ 0 (calendar-spread free).
-    dw_dk : np.ndarray, shape (n_k, n_T)
-        ∂w/∂k — smile slope.
-    d2w_dk2 : np.ndarray, shape (n_k, n_T)
-        ∂²w/∂k² — smile convexity (≥ 0 for no butterfly arb).
+    Uniform grids: central differences interior, one-sided at boundaries.
+    w (n_k,n_T), k_grid, T_grid -> (dw_dT, dw_dk, d2w_dk2). Constraints:
+    dw_dT >= 0 (calendar-arb free), d2w_dk2 >= 0 (no butterfly arb).
     """
-    dk = k_grid[1] - k_grid[0]   # uniform k spacing
-    dT = T_grid[1] - T_grid[0]   # uniform T spacing
+    dk = k_grid[1] - k_grid[0]
+    dT = T_grid[1] - T_grid[0]
 
-    # ── ∂w/∂T (along axis 1 — TTM) ──────────────────────────────────
+    # ∂w/∂T (axis 1, TTM)
     dw_dT = np.zeros_like(w)
     dw_dT[:, 0]    = (w[:, 1] - w[:, 0]) / dT
     dw_dT[:, 1:-1] = (w[:, 2:] - w[:, :-2]) / (2.0 * dT)
     dw_dT[:, -1]   = (w[:, -1] - w[:, -2]) / dT
 
-    # Boundary at T_min: SSVI guarantees w(k, 0) = 0 (θ(0) = 0). Use an
-    # unequal-spacing central difference through {T=0, T_min, T_min+dT}, which
-    # uses the T=0 anchor. h1 = T_min (back to T=0), h2 = dT (forward step):
-    # f'(x) = [h1^2*f(x+h2) + (h2^2-h1^2)*f(x) - h2^2*f(x-h1)] / (h1*h2*(h1+h2))
-    # with f(x-h1) = w(k, 0) = 0.
-    h1 = T_grid[0]   # T_min
+    # T_min boundary: SSVI gives w(k,0)=0 (θ(0)=0). Unequal-spacing central
+    # difference through {0, T_min, T_min+dT} anchored at T=0; h1=T_min,
+    # h2=dT, f' = [h1²f(x+h2)+(h2²-h1²)f(x)-h2²f(x-h1)]/(h1·h2·(h1+h2)),
+    # f(x-h1)=0.
+    h1 = T_grid[0]
     h2 = dT
     dw_dT[:, 0] = (h1**2 * w[:, 1] + (h2**2 - h1**2) * w[:, 0]) / (h1 * h2 * (h1 + h2))
 
-    # ── ∂w/∂k (along axis 0 — log-moneyness) ────────────────────────
+    # ∂w/∂k (axis 0, log-moneyness)
     dw_dk = np.zeros_like(w)
     dw_dk[1:-1, :] = (w[2:, :] - w[:-2, :]) / (2.0 * dk)    # central
     dw_dk[0,    :] = (w[1,  :] - w[0,   :]) / dk             # forward
     dw_dk[-1,   :] = (w[-1, :] - w[-2,  :]) / dk             # backward
 
-    # ── ∂²w/∂k² (along axis 0) ──────────────────────────────────────
+    # ∂²w/∂k² (axis 0)
     d2w_dk2 = np.zeros_like(w)
     d2w_dk2[1:-1, :] = (w[2:, :] - 2.0*w[1:-1, :] + w[:-2, :]) / dk**2
     d2w_dk2[0,    :] = (w[2,  :] - 2.0*w[1,    :] + w[0,   :]) / dk**2
@@ -81,9 +60,7 @@ def compute_tv_derivatives(
     return dw_dT, dw_dk, d2w_dk2
 
 
-# ===========================================================================
-# SECTION 4: GATHERAL DENSITY AND DUPIRE LOCAL VOL
-# ===========================================================================
+# SECTION 4: Gatheral density and Dupire local vol
 
 def compute_gatheral_g(
         w: np.ndarray,
@@ -91,34 +68,14 @@ def compute_gatheral_g(
         d2w_dk2: np.ndarray,
         k_grid: np.ndarray) -> np.ndarray:
     """
-    Compute the Gatheral (2004) risk-neutral density factor g(k, T).
+    Gatheral (2004) risk-neutral density factor g(k, T).
 
-    Definition
-    ----------
-    g(k, T) = [1 − k·(∂w/∂k)/(2w)]²
-              − (∂w/∂k)²/4 · (1/4 + 1/w)
-              + (∂²w/∂k²)/2
+        g = [1 − k·w_k/(2w)]² − (w_k²/4)·(1/4 + 1/w) + w_kk/2
 
-    Properties
-    ----------
-    g ≥ 0  ⟺  no butterfly arbitrage at (k, T).
-    g = 0  gives the risk-neutral distribution's wings (density touches zero).
-
-    Parameters
-    ----------
-    w : np.ndarray, shape (n_k, n_T)
-        Total variance surface.
-    dw_dk, d2w_dk2 : np.ndarray, shape (n_k, n_T)
-        First and second k-derivatives of w.
-    k_grid : np.ndarray, shape (n_k,)
-        Forward log-moneyness grid.
-
-    Returns
-    -------
-    g : np.ndarray, shape (n_k, n_T)
-        Gatheral density factor.
+    g >= 0 iff no butterfly arb; g = 0 at the density wings. Inputs w, dw_dk,
+    d2w_dk2 (n_k,n_T) and k_grid -> g (n_k,n_T).
     """
-    k = k_grid[:, np.newaxis]            # (n_k, 1) → broadcasts to (n_k, n_T)
+    k = k_grid[:, np.newaxis]            # (n_k,1), broadcasts to (n_k,n_T)
     w_safe = np.maximum(w, 1e-12)
 
     term1 = (1.0 - k * dw_dk / (2.0 * w_safe)) ** 2
@@ -130,8 +87,8 @@ def compute_gatheral_g(
     logger.info(f"Gatheral g  range: [{g.min():.4e}, {g.max():.4e}]  "
                 f"(g < 0 fraction: {g_neg_frac*100:.1f}%)")
     if g_neg_frac > 0.01:
-        logger.warning("  *** Butterfly arbitrage present (g < 0 in >1% of grid) — "
-                       "local vol will be unreliable in those regions ***")
+        logger.warning("  *** Butterfly arb (g < 0 in >1% of grid): local vol "
+                       "unreliable there ***")
 
     return g
 
@@ -141,70 +98,38 @@ def compute_dupire_local_vol(
         dw_dT: np.ndarray,
         g: np.ndarray) -> tuple:
     """
-    Apply the Gatheral total-variance form of the Dupire formula.
+    Dupire local vol via Gatheral total-variance form: σ²_loc = (∂w/∂T)/g.
 
-    σ²_loc(k, T) = (∂w/∂T) / g(k, T)
+    Direct from SSVI total variance, no call-price conversion. Safeguards:
+    g < MIN_G_VALUE flagged unreliable (1/0); ∂w/∂T floored to 0 (FD edge
+    noise, SSVI is calendar-arb free); a "filled" surface clips variance to
+    [floor², cap²] for MC, raw (NaN where unreliable) returned via mask.
 
-    This is the most numerically direct path from SSVI total variance to
-    local variance.  No call price conversion needed; no carry mismatch.
-    All quantities are already in forward log-moneyness coordinates.
-
-    Numerical stability safeguards
-    ------------------------------
-    1. Points where g < MIN_G_VALUE are flagged unreliable (would cause 1/0).
-    2. Points where ∂w/∂T < 0 (calendar-spread arb due to numerical noise)
-       are floored to 0 before division — they should not arise from SSVI
-       but can appear at boundaries from finite-difference edge effects.
-    3. A "filled" surface clips local variance to [floor², cap²] for use in
-       the MC simulation.  The raw surface (with NaN at unreliable points)
-       is returned separately.
-
-    Parameters
-    ----------
-    w : np.ndarray, shape (n_k, n_T)
-        Total variance surface (used only for reference; NaN handling).
-    dw_dT : np.ndarray, shape (n_k, n_T)
-        Calendar derivative ∂w/∂T.
-    g : np.ndarray, shape (n_k, n_T)
-        Gatheral density factor from compute_gatheral_g().
-
-    Returns
-    -------
-    local_vol : np.ndarray, shape (n_k, n_T)
-        Dupire local volatility surface (clipped, filled).
-    mask : np.ndarray (bool), shape (n_k, n_T)
-        True where the local vol is numerically reliable.
-    diagnostics : dict
-        Computation statistics for logging/saving.
+    Inputs w, dw_dT, g (n_k,n_T). Returns (local_vol clipped/filled, mask
+    bool reliable, diagnostics dict).
     """
-    # Floor ∂w/∂T to 0: calendar arb should not appear from SSVI, but
-    # finite-difference edge effects can give tiny negative values.
+    # SSVI is calendar-arb free; floor handles FD edge noise only.
     dw_dT_pos = np.maximum(dw_dT, 0.0)
 
-    # Identify reliable region
     g_ok = g > MIN_G_VALUE
     n_neg_g = int((~g_ok).sum())
 
-    # Compute local variance with safe division
     local_var = np.full_like(w, np.nan)
     local_var[g_ok] = dw_dT_pos[g_ok] / g[g_ok]
 
-    # Negative local variance is not physical (dw_dT floored above, so
-    # this should only occur at exact boundaries from floating-point noise)
+    # Negative variance should only be boundary float noise (dw_dT floored).
     var_positive = np.isfinite(local_var) & (local_var > 0)
     n_neg_var = int((g_ok & ~var_positive).sum())
 
-    # Combined reliability mask
     mask = g_ok & var_positive
 
-    # Build filled surface for MC simulation
+    # Filled surface for MC
     g_safe = np.maximum(g, MIN_G_VALUE)
     local_var_filled = dw_dT_pos / g_safe
     local_var_filled = np.clip(local_var_filled,
                                LOCAL_VOL_FLOOR ** 2, LOCAL_VOL_CAP ** 2)
     local_vol = np.sqrt(local_var_filled)
 
-    # Diagnostics
     n_total    = mask.size
     n_reliable = int(mask.sum())
     pct_reliable = 100.0 * n_reliable / n_total
