@@ -18,3 +18,7 @@ MC_N_PATHS = 100_000
 MC_STEPS_PER_YEAR = 252
 MC_N_REPRICE = 0           # number of options to reprice (0 = all in-bounds)
 MC_SEED = 42
+
+# Ensure generated-output directories exist (git-ignored, recreated each run).
+for _d in (DATA_DIR, PLOT_DIR, ARRAY_DIR):
+    _d.mkdir(parents=True, exist_ok=True)

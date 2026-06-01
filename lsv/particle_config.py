@@ -34,3 +34,7 @@ QE_PSI_C = 1.5             # Andersen QE switching threshold
 # Grid for recording L(t, S)
 N_SPOT_GRID = 200           # number of spot grid points for leverage surface
 SPOT_GRID_RANGE = (0.70, 1.30)  # moneyness range for spot grid
+
+# Ensure generated-output directories exist (git-ignored, recreated each run).
+for _d in (DATA_DIR, PLOT_DIR, ARRAY_DIR):
+    _d.mkdir(parents=True, exist_ok=True)

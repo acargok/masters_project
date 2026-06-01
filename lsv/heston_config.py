@@ -36,3 +36,7 @@ UPPER_LIMIT_DIAG = 200.0
 
 # Vega floor for IV-approximation normalisation (absolute dollar vega, SPX scale)
 VEGA_FLOOR = 1.0
+
+# Ensure generated-output directories exist (git-ignored, recreated each run).
+for _d in (DATA_DIR, PLOT_DIR, ARRAY_DIR):
+    _d.mkdir(parents=True, exist_ok=True)

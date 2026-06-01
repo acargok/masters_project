@@ -43,6 +43,8 @@ logger = logging.getLogger("run_pricing")
 PRICING_DIR = Path(__file__).resolve().parent
 DATA_DIR = PRICING_DIR / "data"
 ARRAY_DIR = PRICING_DIR / "arrays"
+for _d in (DATA_DIR, ARRAY_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
 
 # ===== TOP-LEVEL PARAMETERS =====
 N_PATHS = 500_000

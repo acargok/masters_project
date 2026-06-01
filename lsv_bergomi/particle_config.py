@@ -22,3 +22,7 @@ SEED = 42
 
 N_SPOT_GRID = 200
 SPOT_GRID_RANGE = (0.70, 1.30)
+
+# Ensure generated-output directories exist (git-ignored, recreated each run).
+for _d in (DATA_DIR, PLOT_DIR, ARRAY_DIR):
+    _d.mkdir(parents=True, exist_ok=True)

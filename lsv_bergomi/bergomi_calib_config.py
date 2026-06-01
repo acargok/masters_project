@@ -23,3 +23,7 @@ ARRAY_DIR = BERGOMI_DIR / "arrays"
 VS_METHOD_DEFAULT = "carr_madan"
 
 _NSS_T_SMALL = 1e-8
+
+# Ensure generated-output directories exist (git-ignored, recreated each run).
+for _d in (DATA_DIR, PLOT_DIR, ARRAY_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
