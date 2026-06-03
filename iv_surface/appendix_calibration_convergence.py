@@ -1,24 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-appendix_calibration_convergence.py — thesis appendix figure pack
-====================================================================
-Depicts the Heston and Bergomi calibration *process* (rather than just the
-final fitted parameters): differential-evolution loss decay, per-parameter
-convergence traces over generations, 1D objective slices around the
-calibrated optimum, and (Bergomi only) the target-vs-model curve evolution
-over generations for the two-stage benchmark fit.
+Thesis appendix figure pack: the Heston/Bergomi calibration *process* — DE
+loss decay, per-parameter traces over generations, 1D objective slices, and
+(Bergomi) target-vs-model curve evolution for the two-stage fit.
 
-Stand-alone script. Re-runs the two production calibrations with callback
-hooks that capture the best-of-population state per generation, caches the
-traces to CSV, and renders the figures.
+Stand-alone: re-runs both production calibrations with callbacks capturing the
+best-of-population per generation, caches traces to
+iv_surface/appendix_plots/cache/, and renders PNGs to appendix_plots/.
 
-Outputs:
-    iv_surface/appendix_plots/                # generated PNGs
-    iv_surface/appendix_plots/cache/          # per-generation trace CSVs
-
-First run wall-time: ~3 min (Heston DE ~2 min on 1499 options + Bergomi
-two-stage DE ~30 s each). Subsequent runs ~5 s if the cache is present.
+First run ~3 min (Heston DE ~2 min + Bergomi two-stage DE ~30 s each); ~5 s
+when the cache is present.
 """
 import json
 import sys
@@ -35,7 +27,7 @@ from scipy import optimize
 
 warnings.filterwarnings("ignore")
 
-# ───────────────────────── Paths ─────────────────────────
+# Paths
 HERE        = Path(__file__).resolve().parent
 ROOT        = HERE.parent
 LSV_DIR     = ROOT / "lsv_heston"
@@ -45,16 +37,15 @@ CACHE_DIR   = OUT_DIR / "cache"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Both lsv/ and lsv_bergomi/ are added to sys.path so the calibration
-# objective functions live at a canonical module name (heston_calibration,
-# bergomi_param_calibration). This matters for multiprocessing — DE workers
-# need to re-import the objective by its module name when pickling tasks.
+# Put lsv_heston/ and lsv_bergomi/ on sys.path so the objectives import under
+# canonical names (heston_calibration, bergomi_param_calibration) — needed for
+# DE multiprocessing workers to re-import the objective when pickling tasks.
 for p in (LSV_DIR, BERGOMI_DIR):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
 
-# ───────────────────────── Style ─────────────────────────
+# Style
 mpl.rcParams.update({
     "font.family":      "serif",
     "font.size":         10,
@@ -77,8 +68,7 @@ def _save(fig, name: str) -> Path:
     return out
 
 
-# ─────────────── Pipeline module loaders ──────────────────
-# Standard imports (works because LSV_DIR and BERGOMI_DIR are on sys.path).
+# Pipeline module loaders (LSV_DIR and BERGOMI_DIR are on sys.path).
 import heston_calibration as _heston_module
 import bergomi_param_calibration as _bparam_module
 
@@ -91,11 +81,9 @@ def bparam_module():
     return _bparam_module
 
 
-# ════════════════════ Trace capture ══════════════════════════
-# scipy.optimize.differential_evolution will hand the callback either
-# (x, convergence)  on the legacy API, or  (intermediate_result,)  on the
-# newer one. We support both so the script doesn't break across scipy
-# versions.
+# Trace capture.
+# differential_evolution passes the callback (x, convergence) on the legacy
+# API or (intermediate_result,) on the newer one; support both.
 
 def _make_de_callback(trace: list, objective: Callable):
     def cb(*args, **kwargs):
@@ -120,7 +108,7 @@ def _trace_to_df(trace: List[Tuple[np.ndarray, float]],
     return pd.DataFrame(rows)
 
 
-# ════════════════════ Heston calibration trace ═══════════════
+# Heston calibration trace
 _HESTON_PARAMS = ["kappa", "theta", "xi", "rho", "V0"]
 _HESTON_BOUNDS = [
     (0.1, 10.0),      # kappa
@@ -134,8 +122,8 @@ _HESTON_FINAL_JSON = CACHE_DIR / "heston_final.json"
 
 
 def _run_heston_de_with_trace():
-    """Re-run Heston DE on the production calibration pool, capturing per-
-    generation best state. Cached to CSV; subsequent calls read the cache."""
+    """Re-run Heston DE on the production pool, capturing per-generation best
+    state. Cached to CSV."""
     if _HESTON_TRACE_CSV.exists() and _HESTON_FINAL_JSON.exists():
         return (pd.read_csv(_HESTON_TRACE_CSV),
                 json.loads(_HESTON_FINAL_JSON.read_text()))
@@ -146,8 +134,7 @@ def _run_heston_de_with_trace():
     K_arr, T_arr, iv_mkt, mkt_px, vegas, opt_arr = h.prepare_calibration_data(md)
     S, r, q = md["S"], md["r"], md["q"]
 
-    # The objective lives at module level (h.calibration_objective) so
-    # multiprocessing workers can pickle it; pass the per-option data via args.
+    # Module-level objective so MP workers can pickle it; data passed via args.
     obj_args = (S, r, q, K_arr, T_arr, mkt_px, vegas, opt_arr)
     eval_obj = lambda x: h.calibration_objective(x, *obj_args)
 
@@ -161,7 +148,7 @@ def _run_heston_de_with_trace():
         polish=False, workers=h.N_WORKERS, updating="deferred",
         disp=False, callback=cb,
     )
-    # Local NM polish.
+    # Local NM polish
     pol = optimize.minimize(
         h.calibration_objective, de.x, args=obj_args, method="Nelder-Mead",
         options={"maxiter": 5000, "xatol": 1e-8, "fatol": 1e-10},
@@ -180,7 +167,7 @@ def _run_heston_de_with_trace():
     return df, final
 
 
-# ════════════════════ Bergomi Stage-1 trace ══════════════════
+# Bergomi Stage-1 trace
 _BG1_PARAMS = ["nu", "theta", "kappa1", "kappa2", "rho12"]
 _BG1_BOUNDS = [
     (0.5, 2.0),     # nu
@@ -235,7 +222,7 @@ def _run_bergomi_stage1_with_trace():
     return df, final
 
 
-# ════════════════════ Bergomi Stage-2 trace ══════════════════
+# Bergomi Stage-2 trace
 _BG2_PARAMS = ["rho1", "chi"]
 _BG2_BOUNDS = [
     (-0.99, 0.0),
@@ -253,11 +240,11 @@ def _run_bergomi_stage2_with_trace(stage1: dict):
     print("  Running Bergomi Stage 2 DE with trace capture (~30 s)…")
     b = bparam_module()
 
-    # Stage 1 result as a dict (matches bparam.calibrate_stage1 return).
+    # Stage 1 result as a dict (matches bparam.calibrate_stage1 return)
     nu, theta, k1, k2, rho12 = stage1["x_polish"]
     s1 = {"nu": nu, "theta": theta, "kappa1": k1, "kappa2": k2, "rho12": rho12}
 
-    # Stage 2 target: SSVI-derived empirical skew on a fixed maturity grid.
+    # Stage 2 target: SSVI-derived empirical skew on a fixed maturity grid
     iv_surface = np.load(ROOT / "iv_surface" / "arrays" / "iv_surface.npy")
     log_m_grid = np.load(ROOT / "iv_surface" / "arrays" / "log_m_grid.npy")
     ttm_grid   = np.load(ROOT / "iv_surface" / "arrays" / "ttm_grid.npy")
@@ -300,7 +287,7 @@ def _run_bergomi_stage2_with_trace(stage1: dict):
     return df, final
 
 
-# ════════════════════ Figures: Heston ════════════════════════
+# Figures: Heston
 def fig_heston_loss(df: pd.DataFrame, final: dict) -> Path:
     fig, ax = plt.subplots(figsize=(9.0, 4.5))
     ax.semilogy(df["gen"], df["objective"], color="C0", lw=1.5,
@@ -318,12 +305,9 @@ def fig_heston_loss(df: pd.DataFrame, final: dict) -> Path:
 
 
 def fig_heston_param_traces(df: pd.DataFrame, final: dict) -> Path:
-    """All five Heston parameters traced over Differential Evolution
-    generations on a single axes object. Parameters with similar magnitudes
-    share a y-axis: θ and V₀ both sit on the "variance scale" axis since
-    they're both small positive variance levels; κ, ξ, ρ each get their own
-    axis. The Nelder-Mead polish endpoint for each parameter is marked as a
-    thin dashed horizontal in the matching colour."""
+    """All five Heston parameters traced over DE generations on one axes;
+    θ and V₀ share a variance-scale axis, κ/ξ/ρ each get their own. NM-polish
+    endpoints marked as dashed horizontals in matching colours."""
     gen   = df["gen"].to_numpy()
     kappa = df["kappa"].to_numpy()
     theta = df["theta"].to_numpy()
@@ -332,8 +316,7 @@ def fig_heston_param_traces(df: pd.DataFrame, final: dict) -> Path:
     V0    = df["V0"].to_numpy()
     p_kap, p_th, p_xi, p_rho, p_V0 = final["x_polish"]
 
-    # Colours fixed per parameter (consistent across the legend and the
-    # polish-endpoint dashed lines).
+    # Colours fixed per parameter (legend + polish dashed lines)
     c_kappa, c_xi, c_theta, c_V0, c_rho = "C0", "C1", "C2", "C3", "C4"
 
     fig, ax_k = plt.subplots(figsize=(9.0, 4.5))
@@ -362,13 +345,12 @@ def fig_heston_param_traces(df: pd.DataFrame, final: dict) -> Path:
         ax_.tick_params(axis="y", labelcolor=c)
     ax_k.grid(True, alpha=0.3)
 
-    # Combined legend; polish dashed lines explained by a single proxy entry.
+    # Combined legend; one proxy entry for the polish dashed lines
     from matplotlib.lines import Line2D
     proxy_polish = Line2D([], [], color="grey", lw=0.8, ls="--",
                            label="Nelder-Mead polish (per param)")
     handles = [l_k, l_xi, l_th, l_v0, l_r, proxy_polish]
-    # Anchor the legend to the LAST twinx axis (ax_rho) so it paints above
-    # the lines on every twin axis (see Bergomi Stage-1 trace for context).
+    # Anchor on the last twinx axis (ax_rho) so it paints above every twin's lines
     _lg = ax_rho.legend(handles, [h.get_label() for h in handles],
                          loc="best", fontsize=9, ncol=2, framealpha=1.0)
     _lg.set_zorder(10)
@@ -377,9 +359,8 @@ def fig_heston_param_traces(df: pd.DataFrame, final: dict) -> Path:
 
 
 def fig_heston_objective_slices(final: dict) -> Path:
-    """1D cuts through the objective at the calibrated optimum — sweeps each
-    parameter ±25% (within its bounds), holding the others fixed at the
-    NM-polished optimum. Curvature shows how tight each parameter is."""
+    """1D objective cuts at the optimum: sweep each parameter ±25% (within
+    bounds), others fixed at the NM-polished optimum; curvature = tightness."""
     h = heston_module()
     md = h.load_market_data()
     K_arr, T_arr, iv_mkt, mkt_px, vegas, opt_arr = h.prepare_calibration_data(md)
@@ -418,7 +399,7 @@ def fig_heston_objective_slices(final: dict) -> Path:
     return _save(fig, "heston_objective_slices.png")
 
 
-# ════════════════════ Figures: Bergomi Stage 1 ═══════════════
+# Figures: Bergomi Stage 1
 def _loss_curve(df, final, title, fname):
     fig, ax = plt.subplots(figsize=(9.0, 4.5))
     ax.semilogy(df["gen"], df["objective"], color="C0", lw=1.5,
@@ -443,10 +424,8 @@ def fig_bergomi_stage1_loss(df, final) -> Path:
 
 
 def fig_bergomi_stage1_param_traces(df: pd.DataFrame, final: dict) -> Path:
-    """All five Bergomi Stage-1 parameters traced over Differential
-    Evolution generations on a single axes object. Grouped axes: κ₁ (large),
-    ν (medium 0–2), θ + κ₂ share the "small-positive" scale (both ≲ 0.6),
-    and ρ₁₂ gets its own signed-correlation axis."""
+    """All five Bergomi Stage-1 parameters traced over DE generations on one
+    axes; grouped: κ₁ (large), ν (0–2), θ+κ₂ (small ≲0.6), ρ₁₂ (signed)."""
     gen    = df["gen"].to_numpy()
     nu     = df["nu"].to_numpy()
     theta  = df["theta"].to_numpy()
@@ -487,10 +466,7 @@ def fig_bergomi_stage1_param_traces(df: pd.DataFrame, final: dict) -> Path:
     proxy_polish = Line2D([], [], color="grey", lw=0.8, ls="--",
                            label="Nelder-Mead polish (per param)")
     handles = [l_k1, l_nu, l_th, l_k2, l_r, proxy_polish]
-    # Anchor the legend to the LAST twinx axis (ax_r12). Each twinx draws on
-    # top of the previously created axes, so a legend on ax_k1 would be
-    # painted over by lines living on ax_nu / ax_sm / ax_r12; putting it on
-    # the topmost axis keeps it visually above all four traces.
+    # Anchor on the last twinx axis (ax_r12) so it paints above all four traces
     _lg = ax_r12.legend(handles, [h.get_label() for h in handles],
                          loc="best", fontsize=9, ncol=2, framealpha=1.0)
     _lg.set_zorder(10)
@@ -499,14 +475,14 @@ def fig_bergomi_stage1_param_traces(df: pd.DataFrame, final: dict) -> Path:
 
 
 def fig_bergomi_stage1_fit_evolution(df: pd.DataFrame, final: dict) -> Path:
-    """Vol-of-vol model curve at progressive DE generations vs the
-    power-law benchmark."""
+    """Vol-of-vol model curve at progressive DE generations vs the power-law
+    benchmark."""
     b = bparam_module()
     T_grid = np.asarray(final["T_grid"])
     target = np.asarray(final["target"])
 
     n_gen = len(df)
-    # Pick log-spaced snapshot generations.
+    # Log-spaced snapshot generations
     gens = sorted(set(np.unique(np.round(np.logspace(
         0, np.log10(n_gen), 8)).astype(int))))
     gens = [g for g in gens if 1 <= g <= n_gen]
@@ -524,7 +500,7 @@ def fig_bergomi_stage1_fit_evolution(df: pd.DataFrame, final: dict) -> Path:
         ax.plot(T_grid, model * 100.0, color=cmap(norm(g)), lw=1.1,
                 alpha=0.85, label=f"gen {g}")
 
-    # Final (polished) curve on top.
+    # Final (polished) curve on top
     nu, th, k1, k2, r12 = final["x_polish"]
     model_final = b.vol_of_vol_model(T_grid, nu, th, k1, k2, r12)
     ax.plot(T_grid, model_final * 100.0, color="C3", lw=2.0, ls="--",
@@ -538,7 +514,7 @@ def fig_bergomi_stage1_fit_evolution(df: pd.DataFrame, final: dict) -> Path:
     return _save(fig, "bergomi_stage1_fit_evolution.png")
 
 
-# ════════════════════ Figures: Bergomi Stage 2 ═══════════════
+# Figures: Bergomi Stage 2
 def fig_bergomi_stage2_loss(df, final) -> Path:
     return _loss_curve(df, final,
                        "Bergomi Stage 2 — ATMF skew fit convergence",
@@ -546,8 +522,7 @@ def fig_bergomi_stage2_loss(df, final) -> Path:
 
 
 def fig_bergomi_stage2_param_traces(df: pd.DataFrame, final: dict) -> Path:
-    """Both Stage-2 parameters traced on a single shared axis — ρ₁ and χ
-    are both signed quantities in [-1, 1], so a single y-axis is natural."""
+    """Both Stage-2 parameters on one axis (ρ₁, χ both signed in [-1, 1])."""
     gen   = df["gen"].to_numpy()
     rho1  = df["rho1"].to_numpy()
     chi   = df["chi"].to_numpy()
@@ -578,8 +553,7 @@ def fig_bergomi_stage2_param_traces(df: pd.DataFrame, final: dict) -> Path:
 
 
 def fig_bergomi_stage2_fit_evolution(df: pd.DataFrame, final: dict) -> Path:
-    """ATMF skew model curve at progressive DE generations vs the SSVI
-    empirical skew."""
+    """ATMF skew model curve at progressive DE generations vs SSVI skew."""
     b = bparam_module()
     T_grid = np.asarray(final["T_grid"])
     target = np.asarray(final["target"])
@@ -623,7 +597,7 @@ def fig_bergomi_stage2_fit_evolution(df: pd.DataFrame, final: dict) -> Path:
     return _save(fig, "bergomi_stage2_fit_evolution.png")
 
 
-# ══════════════════════════ Main ══════════════════════════
+# Main
 def main():
     print(f"Output dir: {OUT_DIR.resolve()}")
     print(f"Cache dir:  {CACHE_DIR.resolve()}")

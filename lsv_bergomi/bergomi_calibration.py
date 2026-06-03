@@ -1,39 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Bergomi Two-Factor Forward Variance — Step 3a (Bergomi)
-=========================================================
-Part of an LSV (Local Stochastic Volatility) model for pricing Asian options.
-Master's Thesis, Imperial College London.
+"""Bergomi two-factor forward variance, Step 3a (Master's thesis, Imperial).
+Extracts the initial forward-variance curve xi^T_0 from the SSVI surface via
+VS-vol integration and fits the NSS form for stability.
+Two-factor model (Wang 2017, Bergomi 2015):
+    d xi^T_t = 2 nu xi^T_t alpha_theta[(1-theta)e^{-k1(T-t)}dW1 + theta e^{-k2(T-t)}dW2]
+    dS/S = (r-q)dt + sigma(S,t) sqrt(xi^t_t) dW^S.
+In: iv_surface/arrays/ (iv_surface, ttm_grid, log_m_grid, forward_curve).
+Out: data/fwd_var_fit.json, arrays/{fwd_var_curve,vs_vol_curve}.npy, plots/."""
 
-Extracts the initial forward variance curve xi^T_0 from the SSVI surface
-via variance swap volatility integration, and fits a linearly mean-reverting
-parametric form for numerical stability.
-
-The Bergomi two-factor model (Wang 2017, Bergomi 2015):
-
-    d xi^T_t = (2 nu) xi^T_t alpha_theta [
-        (1-theta) e^{-kappa1(T-t)} dW^1_t + theta e^{-kappa2(T-t)} dW^2_t
-    ]
-
-    dS/S = (r-q) dt + sigma(S,t) sqrt(xi^t_t) dW^S
-
-Inputs:
-    iv_surface/arrays/iv_surface.npy     — SSVI implied vol surface
-    iv_surface/arrays/total_var_surface.npy — total variance surface
-    iv_surface/arrays/ttm_grid.npy       — time grid
-    iv_surface/arrays/log_m_grid.npy     — log-moneyness grid
-    lsv_bergomi/data/bergomi_params.json — model parameters
-
-Outputs:
-    lsv_bergomi/data/fwd_var_fit.json    — fitted NSS parameters
-                                            (nss_beta_{0..3}, nss_tau_{1,2}, nss_rmse)
-    lsv_bergomi/arrays/fwd_var_curve.npy — xi^T_0 on ttm_grid (analytic NSS derivative)
-    lsv_bergomi/arrays/vs_vol_curve.npy  — variance swap vol on ttm_grid
-    lsv_bergomi/plots/fwd_var_curve.png  — diagnostic plot
-"""
-
-# ===== IMPORTS =====
 import json
 import logging
 import warnings
@@ -53,7 +28,7 @@ from nss_curve import *
 
 warnings.filterwarnings("ignore")
 
-# ===== LOGGING =====
+# Logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -62,9 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger("bergomi_calibration")
 
 
-# =============================================================================
 # Plotting
-# =============================================================================
 
 def plot_fwd_var(ttm_grid, vs_vol, vs_vol_fitted, fwd_var):
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
@@ -99,13 +72,9 @@ def plot_fwd_var(ttm_grid, vs_vol, vs_vol_fitted, fwd_var):
     logger.info(f"Saved forward variance plot -> {out_path}")
 
 
-# =============================================================================
-# Entry point
-# =============================================================================
-
 def plot_vs_vol_nss_comparison(ttm_grid, vs_vol, fit_legacy, fit_nss,
                                 legacy_params, nss_params, out_path):
-    """Side-by-side comparison of the three-parameter fit and the NSS fit."""
+    """Side-by-side 3-param vs NSS fit comparison."""
     legacy_rmse = float(np.sqrt(np.mean((fit_legacy - vs_vol) ** 2)))
     nss_rmse    = float(np.sqrt(np.mean((fit_nss    - vs_vol) ** 2)))
 
@@ -150,7 +119,7 @@ def plot_vs_vol_nss_comparison(ttm_grid, vs_vol, fit_legacy, fit_nss,
 
 
 def plot_vs_vol_comparison(ttm_grid, vs_proxy, vs_carr_madan, out_path):
-    """Side-by-side comparison plot of proxy vs Carr-Madan VS vol."""
+    """Proxy vs Carr-Madan VS-vol comparison plot."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     ax = axes[0]
@@ -181,7 +150,6 @@ def run(method=VS_METHOD_DEFAULT):
     logger.info(f"STEP 3a (Bergomi): Forward Variance Extraction  method={method}")
     logger.info("=" * 60)
 
-    # Load SSVI surface
     iv_surface = np.load(IV_DIR / "arrays" / "iv_surface.npy")
     ttm_grid = np.load(IV_DIR / "arrays" / "ttm_grid.npy")
     log_m_grid = np.load(IV_DIR / "arrays" / "log_m_grid.npy")
@@ -191,8 +159,8 @@ def run(method=VS_METHOD_DEFAULT):
     logger.info(f"Forward curve: {fwd_curve.shape}, F range "
                 f"[{fwd_curve.min():.2f}, {fwd_curve.max():.2f}]")
 
-    # Compute both methods (always — used for the comparison plot regardless
-    # of which one feeds the production pipeline).
+    # Compute both methods for the comparison plot, regardless of which feeds
+    # the pipeline.
     vs_proxy = extract_vs_vol_proxy(iv_surface, log_m_grid, ttm_grid)
     vs_carr_madan = extract_vs_vol_carr_madan(iv_surface, log_m_grid,
                                                 ttm_grid, fwd_curve)
@@ -212,9 +180,7 @@ def run(method=VS_METHOD_DEFAULT):
     else:
         raise ValueError(f"Unknown VS method: {method!r}")
 
-    # ---- NSS parametric fit ----------------------------------------------
-    # Also fit the three-parameter form for a side-by-side comparison plot,
-    # but route the pipeline through the NSS form.
+    # NSS parametric fit; also fit the 3-param form for the comparison plot.
     legacy_params, vs_vol_fitted_legacy = fit_vs_vol_parametric_legacy(
         ttm_grid, vs_vol)
     legacy_rmse = float(np.sqrt(np.mean(
@@ -225,7 +191,7 @@ def run(method=VS_METHOD_DEFAULT):
     fit_params["vs_method"] = method
     fit_params["legacy_rmse"] = legacy_rmse
 
-    # ---- Forward variance: analytic NSS derivative -----------------------
+    # Forward variance: analytic NSS derivative.
     fwd_var = nss_fwd_variance(
         ttm_grid,
         fit_params["nss_beta_0"], fit_params["nss_beta_1"],
@@ -236,13 +202,13 @@ def run(method=VS_METHOD_DEFAULT):
     logger.info(f"Forward variance range: [{fwd_var.min():.6f}, {fwd_var.max():.6f}]")
     logger.info(f"Forward vol range: [{np.sqrt(fwd_var.min()):.4f}, {np.sqrt(fwd_var.max()):.4f}]")
 
-    # ---- NSS vs legacy comparison plot -----------------------------------
+    # NSS vs legacy comparison plot.
     plot_vs_vol_nss_comparison(
         ttm_grid, vs_vol, vs_vol_fitted_legacy, vs_vol_fitted,
         legacy_params, fit_params,
         PLOT_DIR / "vs_vol_nss_comparison.png")
 
-    # ---- Save -------------------------------------------------------------
+    # Save.
     with open(DATA_DIR / "fwd_var_fit.json", "w") as f:
         json.dump(fit_params, f, indent=2)
     np.save(ARRAY_DIR / "fwd_var_curve.npy", fwd_var)
@@ -252,7 +218,6 @@ def run(method=VS_METHOD_DEFAULT):
     np.save(ARRAY_DIR / "vs_vol_carr_madan.npy", vs_carr_madan)
     logger.info(f"Saved forward variance artifacts -> {ARRAY_DIR}/")
 
-    # Plot
     plot_fwd_var(ttm_grid, vs_vol, vs_vol_fitted, fwd_var)
 
     return fit_params, fwd_var, vs_vol

@@ -16,6 +16,7 @@ arrays/
 plots/
 data/
 run_logs/
+forward_skew_decomposition/report.md
 
 # The raw OptionMetrics extract (iv_surface/spx_raw_data.csv) is the pipeline
 # INPUT and is intentionally tracked — it is not under any ignored directory.

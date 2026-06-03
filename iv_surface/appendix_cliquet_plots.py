@@ -1,23 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-appendix_cliquet_plots.py — thesis appendix figure pack for cliquet pricing
-==============================================================================
-Companion to results_4_4_figures.py. Generates the deeper-dive cliquet
-figures beyond the core §4.4 set (price bars, payoff CDFs, paths + variance,
-decomposition table).
-
-Figures produced (under iv_surface/appendix_plots/):
-
-  1. cliquet_mc_convergence.png       — running price estimate ±1.96 SE
-                                          per cliquet, both LSV models
-  2. cliquet_reset_returns.png        — per-reset return box plots,
-                                          Heston-LSV row / Bergomi-LSV row
-  3. cliquet_payoff_histograms.png    — per-path payoff histograms
-                                          (density counterpart to §4.4 CDFs)
-  4. napoleon_worst_reset.png         — distribution of which reset becomes
-                                          the worst per path (Napoleon)
-  5. reverse_cliquet_consumption.png  — coupon-remaining histograms
+Thesis appendix cliquet figures (companion to results_4_4_figures.py),
+written to iv_surface/appendix_plots/: MC convergence, per-reset return box
+plots, per-path payoff histograms, Napoleon worst-reset analysis, and
+reverse-cliquet coupon-consumption histograms.
 """
 import json
 import warnings
@@ -29,14 +16,14 @@ import numpy as np
 
 warnings.filterwarnings("ignore")
 
-# ───────────────────────── Paths ─────────────────────────
+# Paths
 HERE        = Path(__file__).resolve().parent
 ROOT        = HERE.parent
 PRICING_DIR = ROOT / "pricing"
 OUT_DIR     = HERE / "appendix_plots"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ───────────────────────── Style ─────────────────────────
+# Style
 mpl.rcParams.update({
     "font.family":      "serif",
     "font.size":         10,
@@ -64,9 +51,8 @@ _CLIQ_LABEL  = {
 
 
 def _save(fig, name: str, tight: bool = True) -> Path:
-    """Save and close. tight=False honours the declared figsize exactly so
-    paired figures come out at identical pixel dimensions (overriding the
-    global `savefig.bbox = 'tight'` rcParam)."""
+    """Save and close. tight=False keeps the declared figsize exact (overrides
+    the global savefig.bbox='tight') so paired figures match pixel dimensions."""
     out = OUT_DIR / name
     if tight:
         fig.savefig(out)
@@ -77,7 +63,7 @@ def _save(fig, name: str, tight: bool = True) -> Path:
     return out
 
 
-# ═════════════════════ Data loading ═══════════════════════
+# Data loading
 def load_data() -> dict:
     d = {}
     with open(PRICING_DIR / "data" / "pricing_results.json") as f:
@@ -97,12 +83,11 @@ def load_data() -> dict:
     return d
 
 
-# ═════════════ 1. Monte-Carlo convergence ═════════════════
+# 1. Monte-Carlo convergence
 def fig_mc_convergence(d: dict) -> Path:
-    """Running price estimate ±1.96 SE as a function of the number of
-    paths, log-scale x-axis. One panel per cliquet, both LSV models on
-    each. Pulls the discount factor from `pricing_results.json` per model
-    so the running mean is in present-value units."""
+    """Running price estimate ±1.96 SE vs path count (log x), one panel per
+    cliquet, both LSV models. Discount factor per model (from
+    pricing_results.json) gives present-value units."""
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.4), sharex=True)
     for ax, c in zip(axes, _CLIQUETS):
         df_h = d["results"]["heston_options"][c]["discount_factor"]
@@ -118,7 +103,7 @@ def fig_mc_convergence(d: dict) -> Path:
         ]:
             x = (payoffs * df_factor).astype(np.float64)
             n_total = x.size
-            # 80 log-spaced sample points between 100 and n_total.
+            # 80 log-spaced sample points in [100, n_total]
             counts = np.unique(np.geomspace(100, n_total, 80).astype(int))
             counts = counts[counts <= n_total]
             cum_sum = np.cumsum(x)
@@ -143,19 +128,15 @@ def fig_mc_convergence(d: dict) -> Path:
     return _save(fig, "cliquet_mc_convergence.png")
 
 
-# ═════════════ 2. Per-reset return distributions ═══════════
-# Per-reset returns are independent of the cliquet payoff structure (the same
-# underlying MC paths feed every cliquet; only the post-processing differs), so
-# a single-panel per-model figure carries the full content for any one cliquet.
+# 2. Per-reset return distributions.
+# Per-reset returns don't depend on the cliquet payoff structure (same MC
+# paths feed every cliquet), so one per-model figure suffices.
 _RESET_FIGSIZE = (6.5, 5.0)
 
 
 def _plot_reset_returns(returns: np.ndarray, color: str,
                          fname: str, title: str) -> Path:
-    """Box-and-whisker of per-reset returns (one box per monthly reset).
-
-    Style: alpha-0.55 box fills coloured by model, coloured whiskers/caps,
-    black median, outliers hidden, dotted zero line, M1..M_n ticks."""
+    """Box-and-whisker of per-reset returns (one box per monthly reset)."""
     n_resets = returns.shape[1]
     fig, ax = plt.subplots(figsize=_RESET_FIGSIZE)
     bp = ax.boxplot(
@@ -182,7 +163,7 @@ def _plot_reset_returns(returns: np.ndarray, color: str,
 
 
 def fig_reset_returns_heston(d: dict) -> Path:
-    # Returns are identical across cliquets per model — pick any.
+    # Returns identical across cliquets per model — pick any
     return _plot_reset_returns(
         d["returns"]["accumulator"]["heston_lsv"],
         color=_HESTON_C,
@@ -198,12 +179,11 @@ def fig_reset_returns_bergomi(d: dict) -> Path:
         title="Bergomi-LSV")
 
 
-# ═════════════ 3. Per-path payoff histograms ══════════════
+# 3. Per-path payoff histograms
 def fig_payoff_histograms(d: dict) -> Path:
-    """Histogram of per-path payoffs for each cliquet, Heston-LSV and
-    Bergomi-LSV overlaid (alpha 0.55). Mean line shown for each model in
-    matching colour. Annotated with the % of zero-payoff paths so the
-    reader sees the digital-tail behaviour for reverse cliquet / Napoleon."""
+    """Per-path payoff histograms per cliquet, Heston-LSV / Bergomi-LSV
+    overlaid with mean lines; annotated with % zero-payoff paths (digital
+    tail for reverse cliquet / Napoleon)."""
     fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.4))
     for ax, c in zip(axes, _CLIQUETS):
         for tag, color, label in [
@@ -237,15 +217,11 @@ def fig_payoff_histograms(d: dict) -> Path:
     return _save(fig, "cliquet_payoff_histograms.png")
 
 
-# ═════════════ 4. Napoleon worst-reset analysis ═══════════
+# 4. Napoleon worst-reset analysis
 def fig_napoleon_worst_reset(d: dict) -> Path:
-    """For Napoleon: which reset is the worst per path? Two panels:
-       (a) Histogram (grouped bars per reset index) of the empirical
-           distribution of the worst-reset index, Heston vs Bergomi.
-       (b) Scatter of worst-reset return vs final payoff, with the
-           coupon level marked. Shows how the worst return drives the
-           payoff curtailment.
-    """
+    """Napoleon worst-reset, two panels: (a) worst-reset-index distribution
+    (grouped bars, Heston vs Bergomi); (b) worst-reset return vs final payoff
+    scatter with the coupon level marked."""
     returns_h  = d["returns"]["napoleon"]["heston_lsv"]
     returns_b  = d["returns"]["napoleon"]["bergomi_lsv"]
     payoffs_h  = d["payoffs"]["napoleon"]["heston_lsv"]
@@ -305,13 +281,11 @@ def fig_napoleon_worst_reset(d: dict) -> Path:
     return _save(fig, "napoleon_worst_reset.png")
 
 
-# ═════════════ 5. Reverse cliquet coupon consumption ══════
+# 5. Reverse cliquet coupon consumption
 def fig_reverse_consumption(d: dict) -> Path:
-    """For the reverse cliquet: the coupon is paid at maturity minus the
-    sum of negative monthly returns (floored at zero). Plotted is the
-    *remaining* coupon (= coupon + Σ min(r_i, 0), bottom-floored at zero)
-    as a histogram, with three regime annotations: fully consumed, partial,
-    intact. Heston-LSV and Bergomi-LSV side-by-side on a shared x-axis."""
+    """Reverse cliquet: histogram of remaining coupon
+    (= coupon + Σ min(r_i, 0)) with fully-consumed/partial/intact regimes,
+    Heston-LSV and Bergomi-LSV side-by-side on a shared x-axis."""
     returns_h = d["returns"]["reverse_cliquet"]["heston_lsv"]
     returns_b = d["returns"]["reverse_cliquet"]["bergomi_lsv"]
     coupon = d["results"]["heston_options"]["reverse_cliquet"]["payoff_kwargs"]["coupon"]
@@ -333,7 +307,7 @@ def fig_reverse_consumption(d: dict) -> Path:
                 color=color, alpha=0.75, edgecolor="white", linewidth=0.3)
         ax.axvline(0, color="black", lw=0.8, ls="--")
         ax.axvline(coupon * 100.0, color="grey", lw=0.8, ls=":")
-        # Regime stats.
+        # Regime stats
         pct_fully    = (rem <= 0).mean() * 100.0
         pct_partial  = ((rem > 0) & (rem < coupon)).mean() * 100.0
         pct_intact   = (rem >= coupon).mean() * 100.0
@@ -353,7 +327,7 @@ def fig_reverse_consumption(d: dict) -> Path:
     return _save(fig, "reverse_cliquet_consumption.png")
 
 
-# ══════════════════════════ Main ══════════════════════════
+# Main
 def main():
     print(f"Output dir: {OUT_DIR.resolve()}")
     print("Loading pricing artefacts ...")

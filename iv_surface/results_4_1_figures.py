@@ -645,10 +645,10 @@ def fig_dupire_local_var_heatmap(d: dict) -> Path:
     return _save(fig, "dupire_local_var_heatmap.png")
 
 
-# ─── §4.1.4  σ_BS vs σ_loc — six separate smile figures ────
+# §4.1.4  σ_BS vs σ_loc — six separate smile figures
 def fig_iv_vs_local_vol_smiles(d: dict) -> list:
-    """Per-T smile overlay σ_BS(k) (SSVI surface) vs σ_loc(k) (Dupire).
-    Six independent PNG files, one per maturity (evenly spaced)."""
+    """Per-T overlay σ_BS(k) (SSVI) vs σ_loc(k) (Dupire); six PNGs, one per
+    evenly-spaced maturity."""
     iv    = d["iv_surface"]; lv = d["local_vol"]
     log_m = d["log_m_grid"]; ttm = d["ttm_grid"]
     idxs  = np.linspace(0, len(ttm) - 1, 6, dtype=int)
@@ -672,13 +672,10 @@ def fig_iv_vs_local_vol_smiles(d: dict) -> list:
     return outs
 
 
-# ─── §4.1.5  Dupire repricing — three separate figures ─────
-# Same styling as the SSVI repricing trio (_REPR_FIGSIZE, _square_axes, scatter
-# size, call/put colours, _ERR_LABEL, no titles).
-# Errors are in IV-space, basis points, measured against the SSVI surface
-# (`iv_error_bps = (iv_mc − iv_ssvi) × 10⁴` is what `dupire_local_vol.py`
-# writes into `repricing_errors.csv`, so the benchmark is already SSVI —
-# never the raw market mid).
+# §4.1.5  Dupire repricing — three separate figures
+# Same styling as the SSVI repricing trio. Errors in IV-space bp against the
+# SSVI surface: iv_error_bps = (iv_mc − iv_ssvi)×1e4 (from repricing_errors.csv),
+# so the benchmark is SSVI, not the raw market mid.
 def _dupire_repricing_liquid(d: dict) -> pd.DataFrame:
     df = d["dup_rep"].dropna(subset=["iv_error_bps"])
     return df[df["ssvi_price"] >= LIQUID_MIN_PRICE]
@@ -728,9 +725,8 @@ def fig_dupire_repricing_error_vs_price(d: dict) -> Path:
 
 
 def fig_dupire_repricing_error_vs_moneyness(d: dict) -> Path:
-    """Dupire-MC IV error (bp) vs forward log-moneyness k, calls vs puts.
-    `repricing_errors.csv` already carries `fwd_log_m`, so no merge is
-    required."""
+    """Dupire-MC IV error (bp) vs forward log-moneyness k, calls vs puts
+    (repricing_errors.csv already carries fwd_log_m)."""
     liq = _dupire_repricing_liquid(d)
     calls = liq[liq["option_type"] == "call"]
     puts  = liq[liq["option_type"] == "put"]
@@ -752,7 +748,7 @@ def fig_dupire_repricing_error_vs_moneyness(d: dict) -> Path:
     return _save(fig, "dupire_repricing_error_vs_moneyness.png")
 
 
-# ─── §4.1.5  Dupire MC vs vanilla — six separate figures ──
+# §4.1.5  Dupire MC vs vanilla — six separate figures
 def fig_dupire_mc_scatter_log_all(d: dict) -> Path:
     df = d["dup_rep"].dropna(subset=["iv_error_bps"])
     is_c = (df["option_type"] == "call").values
@@ -845,14 +841,10 @@ def fig_dupire_mc_pct_error_vs_ttm(d: dict) -> Path:
     return _save(fig, "dupire_mc_pct_error_vs_ttm.png")
 
 
-# ─── §4.1.1  Full SSVI fit grid — all 18 slices ───────────
+# §4.1.1  Full SSVI fit grid — all 18 slices
 def fig_full_ssvi_grid(d: dict) -> Path:
-    """SSVI fit per expiry — 6 rows × 3 cols = 18 panels (all expiries).
-
-    Same per-panel content as `fig_ssvi_fit_grid`, covering every fitted slice
-    instead of every third. Layout fits all 18 SPX expiries exactly with no
-    empty panels; portrait orientation keeps each panel close to the main-grid
-    aspect."""
+    """SSVI fit per expiry, 6×3 = 18 panels (every fitted slice). Same
+    per-panel content as fig_ssvi_fit_grid."""
     ssvi = d["ssvi_df"].sort_values("ttm").reset_index(drop=True)
     iv   = d["iv_df"]
 
@@ -904,13 +896,11 @@ def fig_full_ssvi_grid(d: dict) -> Path:
     return _save(fig, "full_ssvi_grid.png")
 
 
-# ─── §4.1.1  Market IV smiles — single panel, all expiries ─
+# §4.1.1  Market IV smiles — single panel, all expiries
 def fig_market_iv_smiles(d: dict) -> Path:
-    """Raw OptionMetrics market IV per expiry, all 18 maturities on one set
-    of axes, line+marker coloured by TTM (viridis). Uses `impl_volatility`
-    (raw OM IV) — not the SSVI-fitted `iv` column — so the figure shows the
-    data the SSVI surface was calibrated against, including the per-slice
-    smile noise that the parametric form smooths out."""
+    """Raw OptionMetrics market IV per expiry, all maturities on one axes,
+    coloured by TTM. Uses impl_volatility (raw OM IV), not the fitted iv
+    column, to show the data the surface was calibrated against."""
     iv = d["iv_df"]
     expiries = (iv.groupby("expiry")["ttm"].first()
                   .sort_values().index.tolist())
@@ -928,9 +918,8 @@ def fig_market_iv_smiles(d: dict) -> Path:
                 color=cmap(norm(T)), lw=1.0, marker="o", ms=2.5,
                 alpha=0.85)
 
-    # Reserve a right-side colourbar slot of fixed width so this figure's data
-    # canvas has the same dimensions as the liquidity bubble figure (which
-    # uses an invisible slot of the same size). Locked via make_axes_locatable.
+    # Fixed-width colourbar slot so this canvas matches the bubble figure
+    # (which uses an invisible slot of the same size).
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size=_CBAR_SIZE, pad=_CBAR_PAD)
     sm = cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
@@ -943,17 +932,13 @@ def fig_market_iv_smiles(d: dict) -> Path:
     return _save(fig, "market_iv_smiles.png", tight=False)
 
 
-# ─── §4.1.1  Liquidity bubble plot ─────────────────────────
+# §4.1.1  Liquidity bubble plot
 def fig_liquidity_bubble(d: dict) -> Path:
-    """Per-option liquidity map: (k, T) bubble plot with marker area scaled
-    by open interest. Calls in blue, puts in red. Bubble area uses
-    sqrt-scaling on open interest so the visual emphasis tracks √OI — a
-    closer match to vega-weighted information content than linear area."""
+    """(k, T) bubble plot, marker area ∝ √(open interest) (≈ vega-weighted
+    emphasis). Calls blue, puts red."""
     iv = d["iv_df"].copy()
     oi = iv["open_interest"].to_numpy(dtype=float)
-    # Marker area: scale so the most-traded contract sits ~250 pts^2 and the
-    # least ~5 pts^2 — preserves rank ordering without letting a single
-    # outlier dominate the figure.
+    # Scale area to ~[5, 250] pts² so one outlier can't dominate
     s_min, s_max = 4.0, 250.0
     rank = np.sqrt(np.maximum(oi, 1.0))
     rank = (rank - rank.min()) / (rank.max() - rank.min() + 1e-12)
@@ -971,7 +956,7 @@ def fig_liquidity_bubble(d: dict) -> Path:
                    s=area[mask], alpha=0.35, color=color,
                    edgecolors="none", label=label)
 
-    # Discrete reference markers for the legend (open interest scale).
+    # Legend reference markers (open-interest scale)
     ref_oi = [1_000, 10_000, 100_000]
     ref_rank = np.sqrt(np.array(ref_oi, dtype=float))
     ref_rank = (ref_rank - np.sqrt(max(oi.min(), 1.0))) / \
@@ -982,8 +967,7 @@ def fig_liquidity_bubble(d: dict) -> Path:
                    alpha=0.45, edgecolors="none",
                    label=f"OI {r_oi:,}")
 
-    # Invisible colourbar slot to lock data-canvas dimensions to the market
-    # IV smiles figure (which uses the slot for a real TTM colourbar).
+    # Invisible colourbar slot to match the market-IV-smiles canvas
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size=_CBAR_SIZE, pad=_CBAR_PAD)
     cax.set_visible(False)
@@ -997,16 +981,11 @@ def fig_liquidity_bubble(d: dict) -> Path:
     return _save(fig, "liquidity_bubble.png", tight=False)
 
 
-# ─── §4.1.1  Iso-strike grid over (k, T) ──────────────────
+# §4.1.1  Iso-strike grid over (k, T)
 def fig_strike_isolines(d: dict) -> Path:
-    """Visualise the (S, T) → (k, T) coordinate transform.
-
-    For a fixed dollar strike K, forward log-moneyness traces
-        k(T) = log(K / F(T)) = log(K / S0) − (r − q) · T
-    — a straight line with slope −(r − q). Iso-strike lines are drawn in
-    black at 5% strike-ratio steps from 50% to 150% of spot. The K = S0
-    line is dashed to mark spot-ATM; no other annotations or background
-    data, just the coordinate-system geometry."""
+    """(S,T) → (k,T) coordinate transform: for fixed K,
+    k(T) = log(K/S0) − (r−q)T is a line of slope −(r−q). Iso-strike lines at
+    5% steps from 50–150% of spot; K=S0 dashed."""
     iv  = d["iv_df"]
     mkt = d["market"]
     S0, r, q = float(mkt["S"]), float(mkt["r"]), float(mkt["q"])
@@ -1016,7 +995,7 @@ def fig_strike_isolines(d: dict) -> Path:
     T_pad      = 0.02 * (T_hi - T_lo)
     T_line     = np.linspace(T_lo - T_pad, T_hi + T_pad, 200)
 
-    # 5% strike-ratio spacing.
+    # 5% strike-ratio spacing
     moneyness_grid = np.arange(0.50, 1.50 + 1e-9, 0.05)
     K_grid = S0 * moneyness_grid
 
@@ -1054,7 +1033,7 @@ def fig_dupire_mc_pct_error_hist(d: dict) -> Path:
     return _save(fig, "dupire_mc_pct_error_hist.png")
 
 
-# ══════════════════════════ Main ══════════════════════════
+# Main
 def main():
     print(f"Output dir: {OUT_DIR.resolve()}")
     print("Loading pipeline artefacts ...")

@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Bergomi LSV Explorer — Interactive Plotly Dashboard
-=====================================================
-Single HTML file with tabbed plots for exploring the Bergomi LSV model outputs:
-leverage surface, forward variance, repricing errors.
-
-Usage:
-    python lsv_explorer.py
-
-Output:
-    plots/lsv_bergomi_explorer.html — open in any browser, switch between tabs
-"""
+"""Interactive Plotly dashboard for Bergomi LSV outputs (leverage surface,
+forward variance, repricing errors) in a single tabbed HTML file.
+Output: plots/lsv_bergomi_explorer.html."""
 
 import json
 import os
@@ -21,7 +12,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# Directories (relative to repo root — run from repo root or lsv_bergomi/)
+# Directories (relative to repo root).
 DIR_DATA   = "lsv_bergomi/data"
 DIR_PLOTS  = "lsv_bergomi/plots"
 DIR_ARRAYS = "lsv_bergomi/arrays"
@@ -29,7 +20,7 @@ IV_DIR_ARRAYS = "iv_surface/arrays"
 DUPIRE_DIR_ARRAYS = "dupire_vol/arrays"
 DUPIRE_DIR_DATA = "dupire_vol/data"
 
-# 4-category colour scheme
+# Category colour/symbol scheme.
 CAT_COLORS = {
     "OTM Call": "#1f77b4",
     "ITM Call": "#7fbfff",
@@ -64,7 +55,7 @@ def load_data():
     with open(os.path.join(DUPIRE_DIR_DATA, "market_params.json")) as f:
         market = json.load(f)
 
-    # Forward variance artifacts
+    # Forward variance artifacts.
     fwd_var = np.load(os.path.join(DIR_ARRAYS, "fwd_var_curve.npy"))
     vs_vol = np.load(os.path.join(DIR_ARRAYS, "vs_vol_curve.npy"))
     vs_vol_fitted = np.load(os.path.join(DIR_ARRAYS, "vs_vol_fitted.npy"))
@@ -73,7 +64,7 @@ def load_data():
     with open(os.path.join(DIR_DATA, "fwd_var_fit.json")) as f:
         fwd_var_fit = json.load(f)
 
-    # IV surface and Dupire local vol for context
+    # IV surface and Dupire local vol for context.
     iv_surface = np.load(os.path.join(IV_DIR_ARRAYS, "iv_surface.npy"))
     log_m_grid = np.load(os.path.join(IV_DIR_ARRAYS, "log_m_grid.npy"))
     local_vol = np.load(os.path.join(DUPIRE_DIR_ARRAYS, "local_vol_surface.npy"))
@@ -124,7 +115,7 @@ def _add_cat_traces(fig, df, x_col, y_col, customdata_cols=None,
             fig.add_trace(trace)
 
 
-# ── Tab 1: 3D Leverage Surface ──────────────────────────────────────────────
+# Tab 1: 3D leverage surface
 
 def make_leverage_surface(leverage, spot_grid, time_grid, S):
     log_spot = np.log(spot_grid / S)
@@ -159,7 +150,7 @@ def make_leverage_surface(leverage, spot_grid, time_grid, S):
     return fig
 
 
-# ── Tab 2: Leverage Slices by Time ──────────────────────────────────────────
+# Tab 2: leverage slices by time
 
 def make_leverage_slices(leverage, spot_grid, time_grid, S):
     log_spot = np.log(spot_grid / S)
@@ -184,7 +175,7 @@ def make_leverage_slices(leverage, spot_grid, time_grid, S):
     return fig
 
 
-# ── Tab 3: Forward Variance Curve ──────────────────────────────────────────
+# Tab 3: forward variance curve
 
 def make_fwd_var_plot(ttm_grid, vs_vol, vs_vol_fitted, fwd_var, fwd_var_fit):
     fig = make_subplots(
@@ -243,7 +234,7 @@ def make_fwd_var_plot(ttm_grid, vs_vol, vs_vol_fitted, fwd_var, fwd_var_fit):
     return fig
 
 
-# ── Tab 4: Surfaces Comparison ─────────────────────────────────────────────
+# Tab 4: surfaces comparison
 
 def make_surfaces_comparison(leverage, spot_grid, time_grid, iv_surface,
                              local_vol, log_m_grid, ttm_grid_iv, S):
@@ -275,10 +266,10 @@ def make_surfaces_comparison(leverage, spot_grid, time_grid, iv_surface,
     return fig
 
 
-# ── Tab 5: Bergomi Params + Summary ────────────────────────────────────────
+# Tab 5: Bergomi params + summary
 
 def make_bergomi_summary(bergomi, particle_log, val_summary, market, fwd_var_fit):
-    """Rich text summary of Bergomi params and validation results."""
+    """Text summary of Bergomi params and validation results."""
     fig = go.Figure()
 
     # Bergomi params
@@ -341,7 +332,7 @@ def make_bergomi_summary(bergomi, particle_log, val_summary, market, fwd_var_fit
     return fig
 
 
-# ── Tab 6: IV Error by Moneyness ──────────────────────────────────────────
+# Tab 6: IV error by moneyness
 
 def make_error_by_moneyness(df):
     valid = df.dropna(subset=["lsv_iv_error_bps"]).copy()
@@ -368,7 +359,7 @@ def make_error_by_moneyness(df):
     return fig
 
 
-# ── Tab 7: IV Error by TTM ────────────────────────────────────────────────
+# Tab 7: IV error by TTM
 
 def make_error_by_ttm(df):
     valid = df.dropna(subset=["lsv_iv_error_bps"]).copy()
@@ -392,7 +383,7 @@ def make_error_by_ttm(df):
     return fig
 
 
-# ── Tab 8: IV Error Histogram ─────────────────────────────────────────────
+# Tab 8: IV error histogram
 
 def make_error_hist(df):
     valid = df.dropna(subset=["lsv_iv_error_bps"])
@@ -417,7 +408,7 @@ def make_error_hist(df):
     return fig
 
 
-# ── Tab 9: Price Scatter ──────────────────────────────────────────────────
+# Tab 9: price scatter
 
 def make_price_scatter(df):
     valid = df.dropna(subset=["lsv_price"]).copy()
@@ -451,7 +442,7 @@ def make_price_scatter(df):
     return fig
 
 
-# ── Tab 10: Summary Stats Table ───────────────────────────────────────────
+# Tab 10: summary stats table
 
 def make_summary_table(df, val_summary, market):
     valid = df.dropna(subset=["lsv_iv_error_bps"])
@@ -487,7 +478,7 @@ def make_summary_table(df, val_summary, market):
     return fig
 
 
-# ── HTML builder ───────────────────────────────────────────────────────────
+# HTML builder
 
 def build_html(figures, tab_names, descriptions, diagnostic_data=None, diagnostic_tab_idx=None):
     """Build a single HTML file with CSS tabs and Plotly figures."""
@@ -762,7 +753,7 @@ renderPlot(0);
     return html_head + html_tabs + html_script
 
 
-# ── Data prep for diagnostic tab ───────────────────────────────────────────
+# Data prep for diagnostic tab
 
 def prepare_diagnostic_data(df):
     valid = df.dropna(subset=["lsv_iv_error_bps", "lsv_vs_ssvi_pct",
@@ -783,7 +774,7 @@ def prepare_diagnostic_data(df):
     }
 
 
-# ── Tab descriptions ───────────────────────────────────────────────────────
+# Tab descriptions
 
 TAB_DESCRIPTIONS = {
     "Leverage Surface": "3D view of the calibrated Bergomi leverage function σ(t, S). Rotate and zoom.",
@@ -834,7 +825,7 @@ def main():
         make_error_by_ttm(df),
         make_error_hist(df),
         make_price_scatter(df),
-        None,  # diagnostic tab — custom HTML
+        None,  # diagnostic tab: custom HTML
         make_summary_table(df, val_summary, market),
     ]
 

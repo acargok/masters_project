@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LSV Explorer — Interactive Plotly Dashboard
-=============================================
-Single HTML file with tabbed plots for exploring the LSV model outputs:
-leverage surface, Heston calibration, and repricing errors (vs market AND
-vs Dupire).
+LSV explorer: interactive Plotly dashboard.
 
-Usage:
-    python lsv_explorer.py
+Single tabbed HTML for the LSV outputs (leverage surface, Heston calibration,
+repricing errors vs market and vs Dupire).
 
-Output:
-    plots/lsv_explorer.html — open in any browser, switch between tabs
+Usage:  python lsv_explorer.py
+Output: plots/lsv_explorer.html
 """
 
 import json
@@ -47,31 +43,25 @@ CAT_SYMBOLS = {
 
 def load_data():
     """Load all pre-computed data."""
-    # Repricing errors
     df = pd.read_csv(os.path.join(DIR_DATA, "lsv_repricing_errors.csv"))
 
-    # Leverage surface
     leverage = np.load(os.path.join(DIR_ARRAYS, "leverage_surface.npy"))
     spot_grid = np.load(os.path.join(DIR_ARRAYS, "leverage_spot_grid.npy"))
     time_grid = np.load(os.path.join(DIR_ARRAYS, "leverage_time_grid.npy"))
 
-    # Heston params
     with open(os.path.join(DIR_DATA, "heston_params.json")) as f:
         heston = json.load(f)
 
-    # Particle log
     with open(os.path.join(DIR_DATA, "particle_log.json")) as f:
         particle_log = json.load(f)
 
-    # Validation summary
     with open(os.path.join(DIR_DATA, "validation_summary.json")) as f:
         val_summary = json.load(f)
 
-    # Market params
     with open(os.path.join(DUPIRE_DIR_DATA, "market_params.json")) as f:
         market = json.load(f)
 
-    # IV surface and Dupire local vol for context
+    # IV surface + Dupire local vol for context
     iv_surface = np.load(os.path.join(IV_DIR_ARRAYS, "iv_surface.npy"))
     log_m_grid = np.load(os.path.join(IV_DIR_ARRAYS, "log_m_grid.npy"))
     ttm_grid = np.load(os.path.join(IV_DIR_ARRAYS, "ttm_grid.npy"))
@@ -122,7 +112,7 @@ def _add_cat_traces(fig, df, x_col, y_col, customdata_cols=None,
             fig.add_trace(trace)
 
 
-# ── Tab 1: 3D Leverage Surface ──────────────────────────────────────────────
+# Tab 1: 3D leverage surface
 
 def make_leverage_surface(leverage, spot_grid, time_grid, S):
     log_spot = np.log(spot_grid / S)
@@ -157,7 +147,7 @@ def make_leverage_surface(leverage, spot_grid, time_grid, S):
     return fig
 
 
-# ── Tab 2: Leverage Slices by Time ──────────────────────────────────────────
+# Tab 2: leverage slices by time
 
 def make_leverage_slices(leverage, spot_grid, time_grid, S):
     log_spot = np.log(spot_grid / S)
@@ -182,7 +172,7 @@ def make_leverage_slices(leverage, spot_grid, time_grid, S):
     return fig
 
 
-# ── Tab 3: Leverage vs Local Vol vs IV ───────────────────────────────────────
+# Tab 3: leverage vs local vol vs IV
 
 def make_surfaces_comparison(leverage, spot_grid, time_grid, iv_surface,
                              local_vol, log_m_grid, ttm_grid, S):
@@ -216,11 +206,10 @@ def make_surfaces_comparison(leverage, spot_grid, time_grid, iv_surface,
     return fig
 
 
-# ── Tab 4: Heston Fit Summary ───────────────────────────────────────────────
+# Tab 4: Heston fit summary
 
 def make_heston_summary(heston, particle_log, val_summary, market):
-    """Summary table with Heston params, particle stats, and validation metrics."""
-    # Heston parameters
+    """Summary table: Heston params, particle stats, validation metrics."""
     heston_rows = [
         ["κ (mean reversion)", f"{heston['kappa']:.4f}"],
         ["θ (long-run var)", f"{heston['theta']:.6f}"],
@@ -283,10 +272,10 @@ def make_heston_summary(heston, particle_log, val_summary, market):
     return fig
 
 
-# ── Tab 5: LSV IV Error (bp) vs Log-Moneyness ────────────────────────────────
+# Tab 5: LSV IV error (bp) vs log-moneyness
 
 def make_lsv_vs_dupire_moneyness(df):
-    """Primary comparison: LSV IV error in bp vs log-moneyness."""
+    """Primary comparison: LSV IV error (bp) vs log-moneyness."""
     valid = df.dropna(subset=["lsv_iv_error_bps"])
     fig = make_subplots(rows=1, cols=2,
                         subplot_titles=["All Options",
@@ -331,7 +320,7 @@ def make_lsv_vs_dupire_moneyness(df):
     return fig
 
 
-# ── Tab 6: LSV IV Error (bp) vs TTM ──────────────────────────────────────────
+# Tab 6: LSV IV error (bp) vs TTM
 
 def make_lsv_vs_dupire_ttm(df):
     """LSV IV error (bp) vs time to maturity."""
@@ -367,7 +356,7 @@ def make_lsv_vs_dupire_ttm(df):
     return fig
 
 
-# ── Tab 7: LSV IV Error (bp) — Distribution ──────────────────────────────────
+# Tab 7: LSV IV error (bp) distribution
 
 def make_lsv_vs_dupire_hist(df):
     """Histogram of LSV IV error (bp) for all vs liquid."""
@@ -413,10 +402,10 @@ def make_lsv_vs_dupire_hist(df):
     return fig
 
 
-# ── Tab 8: LSV & Dupire vs SSVI Scatter ────────────────────────────────────
+# Tab 8: LSV & Dupire vs SSVI scatter
 
 def make_price_scatter(df):
-    """LSV and Dupire repriced prices vs market — side by side."""
+    """LSV and Dupire repriced prices vs market, side by side."""
     liquid = df[df["ssvi_price"] >= 10.0]
 
     fig = make_subplots(rows=1, cols=2,
@@ -473,10 +462,10 @@ def make_price_scatter(df):
     return fig
 
 
-# ── Tab 9: LSV vs SSVI — Pct Error vs Log-Moneyness ───────────────────────
+# Tab 9: LSV vs SSVI pct error vs log-moneyness
 
 def make_lsv_vs_ssvi_moneyness(df):
-    """LSV and Dupire errors vs market, plotted against log-moneyness."""
+    """LSV and Dupire pct errors vs market, by log-moneyness."""
     liquid = df[df["ssvi_price"] >= 10.0].copy()
 
     fig = make_subplots(rows=1, cols=2,
@@ -510,10 +499,10 @@ def make_lsv_vs_ssvi_moneyness(df):
     return fig
 
 
-# ── Tab 10: Error Diagnostic (interactive) ──────────────────────────────────
+# Tab 10: error diagnostic (interactive)
 
 def prepare_diagnostic_data(df):
-    """Prepare repricing data as JSON for the interactive diagnostic tab."""
+    """Repricing data as JSON for the interactive diagnostic tab."""
     cols = ["strike", "ttm", "option_type", "moneyness", "log_moneyness",
             "ssvi_price", "lsv_price", "dupire_price",
             "iv_ssvi", "iv_lsv", "lsv_iv_error_bps",
@@ -524,10 +513,10 @@ def prepare_diagnostic_data(df):
     return clean.to_dict(orient="list")
 
 
-# ── Tab 11: Summary Stats Table ─────────────────────────────────────────────
+# Tab 11: summary stats table
 
 def make_summary_table(df, val_summary, market):
-    """Comprehensive summary stats table."""
+    """Summary stats table."""
     def stats_row(name, subset):
         if len(subset) == 0:
             return [name, 0, "—", "—", "—", "—", "—"]
@@ -579,7 +568,7 @@ def make_summary_table(df, val_summary, market):
     return fig
 
 
-# ── HTML Assembly ────────────────────────────────────────────────────────────
+# HTML assembly
 
 TAB_DESCRIPTIONS = {
     "Leverage Surface": (
@@ -647,7 +636,7 @@ TAB_DESCRIPTIONS = {
 
 
 def build_html(figures, tab_names, descriptions, diagnostic_data=None, diagnostic_tab_idx=None):
-    """Build a single HTML file with CSS tabs and separate Plotly figures."""
+    """Build the single tabbed HTML file from the Plotly figures."""
     fig_json_list = []
     fig_idx_map = {}
     for i, fig in enumerate(figures):
@@ -958,7 +947,7 @@ def main():
         make_lsv_vs_dupire_hist(df),
         make_price_scatter(df),
         make_lsv_vs_ssvi_moneyness(df),
-        None,  # diagnostic tab — custom HTML
+        None,  # diagnostic tab: custom HTML
         make_summary_table(df, val_summary, market),
     ]
 

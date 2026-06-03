@@ -1,24 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-results_4_2_figures.py — thesis §4.2 (Stochastic Volatility Calibration) figure pack
-======================================================================================
-Stand-alone script. Reads cached pipeline artefacts from
-    lsv/data/, lsv/arrays/
-    lsv_bergomi/data/, lsv_bergomi/arrays/
-    iv_surface/data/, iv_surface/arrays/
-    dupire_vol/data/
-and writes thesis-ready matplotlib figures + two LaTeX tables to
-    iv_surface/results_4.2_plots/
+Thesis §4.2 (Stochastic Volatility Calibration) figure pack. Stand-alone:
+reads cached artefacts from lsv_heston/, lsv_bergomi/, iv_surface/,
+dupire_vol/ and writes figures + two LaTeX tables to
+iv_surface/results_4.2_plots/. Style inherited from results_4_1_figures.py.
 
-Style conventions inherited from results_4_1_figures.py.
-
-Per-option repricing data for the Heston pure-SV and Bergomi pure-SV fits is
-not persisted by the upstream pipelines (only the summary JSONs are). On first
-invocation this script re-runs the Heston semi-analytic pricer (~seconds) and
-the Bergomi pure-SV Monte Carlo (~a couple of minutes) and writes
-`cache/{heston,bergomi}_repricing_errors.csv`. Subsequent invocations read the
-cache and are fast.
+Per-option repricing for the Heston/Bergomi pure-SV fits is not persisted
+upstream, so the first run re-prices (Heston semi-analytic ~seconds, Bergomi
+MC ~minutes) into cache/{heston,bergomi}_repricing_errors.csv; later runs read
+the cache.
 """
 import importlib.util
 import json
@@ -33,7 +24,7 @@ from scipy import interpolate
 
 warnings.filterwarnings("ignore")
 
-# ───────────────────────── Paths ─────────────────────────
+# Paths
 HERE          = Path(__file__).resolve().parent          # iv_surface/
 ROOT          = HERE.parent
 IV_DIR        = HERE
@@ -46,7 +37,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ───────────────────────── Style ─────────────────────────
+# Style
 mpl.rcParams.update({
     "font.family":      "serif",
     "font.size":         10,
@@ -84,9 +75,9 @@ def _save(fig, name: str) -> Path:
     return out
 
 
-# ─────────────────── Pipeline module loaders ──────────────
-# `lsv/particle_method.py` and `lsv_bergomi/particle_method.py` share a basename,
-# so we load by path under unique module names to avoid sys.modules collisions.
+# Pipeline module loaders.
+# lsv_heston/ and lsv_bergomi/ share file basenames, so load by path under
+# unique module names to avoid sys.modules collisions.
 def _import_by_path(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
     mod  = importlib.util.module_from_spec(spec)
@@ -114,10 +105,9 @@ def bergomi_pure_module():
     return _bergomi_pure
 
 
-# ─────────────── Bergomi parametric-form helpers ──────────
-# Reproduced here so the §4.2.2 Stage 1/2 reconstruction figures don't need to
-# import lsv_bergomi/bergomi_param_calibration.py (and re-run its __main__ side
-# effects).
+# Bergomi parametric-form helpers.
+# Reproduced here so the §4.2.2 Stage 1/2 figures avoid importing
+# lsv_bergomi/bergomi_param_calibration.py (and its __main__ side effects).
 def alpha_theta(theta: float, rho12: float) -> float:
     denom = np.sqrt((1.0 - theta) ** 2 + theta ** 2
                     + 2.0 * rho12 * theta * (1.0 - theta))
@@ -181,9 +171,7 @@ _T_VOLOFVOL = np.array([1/12, 2/12, 3/12, 6/12, 9/12, 1.0, 1.5, 2.0])
 _T_SKEW_MIN, _T_SKEW_MAX, _T_SKEW_N = 0.25, 2.0, 25
 
 
-# ───────────────── Bounds for parameter tables ────────────
-# The exact admissible set the optimisers searched over, matching the
-# calibration scripts.
+# Bounds for parameter tables — the admissible set the optimisers searched.
 HESTON_BOUNDS = {
     "kappa": (0.1, 10.0),
     "theta": (0.005, 0.50),
@@ -202,14 +190,14 @@ BERGOMI_BOUNDS = {
 }
 
 
-# ═════════════════════ Data loading ═══════════════════════
+# Data loading
 def load_data() -> dict:
     d = {}
-    # ── Heston ────────────────────────────────────────────
+    # Heston
     with open(LSV_DIR / "data" / "heston_params.json") as f:
         d["heston_params"] = json.load(f)
 
-    # ── Bergomi ───────────────────────────────────────────
+    # Bergomi
     with open(BERGOMI_DIR / "data" / "bergomi_params.json") as f:
         d["bergomi_params"] = json.load(f)
     with open(BERGOMI_DIR / "data" / "bergomi_fit.json") as f:
@@ -221,21 +209,20 @@ def load_data() -> dict:
     d["vs_vol_fitted"]  = np.load(BERGOMI_DIR / "arrays" / "vs_vol_fitted.npy")
     d["fwd_var_curve"]  = np.load(BERGOMI_DIR / "arrays" / "fwd_var_curve.npy")
 
-    # ── SSVI surface & grids ──────────────────────────────
+    # SSVI surface & grids
     d["iv_surface"] = np.load(IV_DIR / "arrays" / "iv_surface.npy")
     d["log_m_grid"] = np.load(IV_DIR / "arrays" / "log_m_grid.npy")
     d["ttm_grid"]   = np.load(IV_DIR / "arrays" / "ttm_grid.npy")
 
-    # ── Market params (used by repricing helpers) ─────────
+    # Market params (used by repricing helpers)
     with open(DUPIRE_DIR / "data" / "market_params.json") as f:
         d["market"] = json.load(f)
     return d
 
 
-# ═════════════════ Repricing CSV cache ════════════════════
-# The Heston and Bergomi pure-SV pipelines do not persist per-option repricing
-# rows — only the summary JSONs. We re-run the relevant helpers from the
-# pipeline modules and persist the per-option errors to `cache/` here.
+# Repricing CSV cache.
+# Pipelines persist only summary JSONs; re-run their helpers and cache the
+# per-option errors here.
 
 _HESTON_CSV   = CACHE_DIR / "heston_repricing_errors.csv"
 _BERGOMI_CSV  = CACHE_DIR / "bergomi_repricing_errors.csv"
@@ -245,8 +232,7 @@ def _generate_heston_repricing(d: dict) -> pd.DataFrame:
     print("  building Heston per-option repricing (semi-analytic pricer)…")
     h = heston_module()
     market_data = h.load_market_data()
-    # No max_options override — use the pipeline default so every option
-    # surviving the filter chain is repriced and plotted.
+    # Pipeline default: reprice every option surviving the filter chain.
     K, T, iv_ssvi, ssvi_prices, _vegas, opt_arr = h.prepare_calibration_data(
         market_data)
 
@@ -290,8 +276,7 @@ def _generate_bergomi_repricing(d: dict) -> pd.DataFrame:
         ttm_grid, fwd_var, kind="linear",
         bounds_error=False, fill_value=(fwd_var[0], fwd_var[-1]))
 
-    # No max_options override — use the pipeline default so every option
-    # surviving the filter chain is repriced and plotted.
+    # Pipeline default: reprice every option surviving the filter chain.
     pool = b.select_option_pool(S, r, q, seed=b.SEED)
     K = pool["strike"].values.astype(np.float64)
     T = pool["ttm"].values.astype(np.float64)
@@ -343,11 +328,11 @@ def get_bergomi_repricing(d: dict) -> pd.DataFrame:
     return _generate_bergomi_repricing(d)
 
 
-# ══════════════════ §4.2.1 — Heston ═══════════════════════
+# §4.2.1 — Heston
 
 def fig_heston_params_table(d: dict) -> Path:
     """LaTeX table: bounds + calibrated values for the five Heston parameters,
-    plus Feller status and IV/price fit diagnostics."""
+    Feller status, and IV/price fit diagnostics."""
     p = d["heston_params"]
     rows = [
         (r"$\kappa$",  HESTON_BOUNDS["kappa"], p["kappa"]),
@@ -496,8 +481,8 @@ def fig_heston_fit_iv_error_vs_ttm(d: dict) -> Path:
                                  "heston_fit_iv_error_vs_ttm.png")
 
 
-# Third Checkpoint trio — square box, bp units, calls/puts circles, matching
-# the SSVI/Dupire repricing trio convention so all checkpoints look the same.
+# Checkpoint trio — square box, bp units, calls/puts circles (matches the
+# SSVI/Dupire repricing trio convention).
 def _trio_error_hist(df: pd.DataFrame, fname: str) -> Path:
     return _fit_iv_error_hist(df, fname)
 
@@ -542,11 +527,11 @@ def fig_heston_repricing_error_vs_moneyness(d: dict) -> Path:
                                      "heston_repricing_error_vs_moneyness.png")
 
 
-# ══════════════════ §4.2.2 — Bergomi ══════════════════════
+# §4.2.2 — Bergomi
 
 def fig_vs_vol_curve(d: dict) -> Path:
-    """Variance-swap volatility: SSVI-derived per-maturity points and the
-    Nelson-Siegel-Svensson parametric fit (Svensson 1994)."""
+    """Variance-swap vol: SSVI-derived per-maturity points and the
+    Nelson-Siegel-Svensson fit (Svensson 1994)."""
     ttm = d["ttm_grid"]
     vs_raw    = d["vs_vol_curve"]
     vs_fitted = d["vs_vol_fitted"]
@@ -587,8 +572,7 @@ def fig_fwd_var_curve(d: dict) -> Path:
 
 
 def fig_bergomi_calib_volofvol(d: dict) -> Path:
-    """Stage 1 — vol-of-vol fit reconstructed from saved params and the
-    power-law benchmark recorded in `bergomi_params.json`."""
+    """Stage 1 — vol-of-vol fit vs the power-law benchmark in bergomi_params.json."""
     p   = d["bergomi_params"]
     bm  = p["benchmark"]
     T_grid = _T_VOLOFVOL
@@ -759,7 +743,7 @@ def fig_bergomi_repricing_error_vs_moneyness(d: dict) -> Path:
                                      "bergomi_repricing_error_vs_moneyness.png")
 
 
-# ══════════════════════════ Main ══════════════════════════
+# Main
 def main():
     print(f"Output dir: {OUT_DIR.resolve()}")
     print(f"Cache dir:  {CACHE_DIR.resolve()}")

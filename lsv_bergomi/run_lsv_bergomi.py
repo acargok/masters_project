@@ -1,33 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Bergomi LSV Model — Full Pipeline Runner
-==========================================
-Part of an LSV (Local Stochastic Volatility) model for pricing Asian options.
-Master's Thesis, Imperial College London.
+"""Bergomi LSV pipeline runner (Master's thesis, Imperial College London).
+Runs Step 3: (3a) forward-variance extraction from SSVI, (3b) particle method
+for the leverage sigma(t,S), and (Checkpoint 2) LSV validation via MC repricing.
+Convergence-analysis parameters (Chapter 4) are centralised here. See --help."""
 
-Runs the complete Step 3 (Bergomi) pipeline:
-    3a) Forward variance extraction from SSVI surface
-    3b) Particle method for leverage function sigma(t, S)
-    Checkpoint 2) LSV validation via MC repricing
-
-Top-level parameters for convergence analysis (Chapter 4) are centralised here
-and can be easily varied.
-
-Usage:
-    python run_lsv_bergomi.py                   # run full pipeline with defaults
-    python run_lsv_bergomi.py --particles 10000 # override N
-    python run_lsv_bergomi.py --skip-fwd-var    # skip forward variance, reuse existing
-"""
-
-# ===== IMPORTS =====
 import argparse
 import logging
 import sys
 import time
 from pathlib import Path
 
-# ===== LOGGING =====
+# Logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -35,12 +19,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_lsv_bergomi")
 
-# ===== TOP-LEVEL PARAMETERS =====
-N_PARTICLES = 5_000              # number of particles
-DT = 1.0 / 504.0                # daily time step
-BANDWIDTH_OVERRIDE = None        # None = LOO-CV; set float to override
-MC_VALIDATION_PATHS = 100_000   # MC repricing: number of paths
-MC_VALIDATION_OPTIONS = 0      # MC repricing: number of options (0 = all)
+# Parameters
+N_PARTICLES = 5_000
+DT = 1.0 / 504.0
+BANDWIDTH_OVERRIDE = None        # None = LOO-CV; float to override
+MC_VALIDATION_PATHS = 100_000
+MC_VALIDATION_OPTIONS = 0        # 0 = all
 SEED = 42
 
 
@@ -84,14 +68,13 @@ def main():
     logger.info(f"  Seed:        {args.seed}")
     logger.info("=" * 70)
 
-    # Add this directory to path for imports
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
     HERE = Path(__file__).resolve().parent
     PARAMS_PATH = HERE / "data" / "bergomi_params.json"
     HANDPICKED_BACKUP = HERE / "data" / "bergomi_params_handpicked_backup.json"
 
-    # ---- Step 3a: Forward variance extraction ----
+    # Step 3a: forward variance extraction
     if not args.skip_fwd_var:
         logger.info("")
         logger.info(">>> STEP 3a: Forward Variance Extraction")
@@ -101,7 +84,7 @@ def main():
     else:
         logger.info(">>> Skipping Step 3a (--skip-fwd-var)")
 
-    # ---- Step 3a': Bergomi parameter calibration (Wang separate calibration) ----
+    # Step 3a': Bergomi parameter calibration (Wang separate calibration)
     if args.use_handpicked:
         if HANDPICKED_BACKUP.exists():
             import shutil
@@ -122,9 +105,8 @@ def main():
     else:
         logger.info(">>> Skipping Step 3a' parameter calibration (--skip-param-calib)")
 
-    # ---- Step 3a'': Pure-Bergomi vanilla repricing diagnostic ----
-    # Shows how well the calibrated pure stochastic-volatility backbone fits
-    # market vanillas before the LSV leverage function is applied.
+    # Step 3a'': pure-Bergomi vanilla fit diagnostic (SV backbone fit before
+    # the LSV leverage is applied).
     if not args.skip_pure_sv_fit:
         t_fit = time.time()
         logger.info("")
@@ -135,7 +117,7 @@ def main():
     else:
         logger.info(">>> Skipping Step 3a'' pure-SV fit (--skip-pure-sv-fit)")
 
-    # ---- Step 3b: Particle method ----
+    # Step 3b: particle method
     t_particles = time.time()
     if not args.skip_particles:
         logger.info("")
@@ -151,7 +133,7 @@ def main():
     else:
         logger.info(">>> Skipping Step 3b (--skip-particles)")
 
-    # ---- Checkpoint 2: Validation ----
+    # Checkpoint 2: validation
     t_val = time.time()
     logger.info("")
     logger.info(">>> CHECKPOINT 2: Bergomi LSV Validation")
@@ -163,7 +145,7 @@ def main():
     )
     logger.info(f">>> Checkpoint 2 complete in {time.time() - t_val:.1f}s")
 
-    # ---- Summary ----
+    # Summary
     total_time = time.time() - t_start
     logger.info("")
     logger.info("=" * 70)

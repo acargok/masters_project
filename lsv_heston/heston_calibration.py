@@ -1,26 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Heston Model Calibration — Step 3a
-====================================
-Part of an LSV (Local Stochastic Volatility) model for pricing Asian options.
-Master's Thesis, Imperial College London.
+Heston calibration — Step 3a (Master's Thesis, Imperial College London).
 
-Calibrates the Heston stochastic volatility model parameters (kappa, theta, xi,
-rho, V0) to the implied volatility surface from Step 1.  Uses the Heston
-characteristic function and semi-analytic pricing via Carr-Madan / Lewis
-integration, then minimises the weighted sum of squared IV errors with
-scipy.optimize.differential_evolution.
-
-The Feller condition 2*kappa*theta > xi^2 is enforced as a soft penalty.
+Calibrates Heston params (kappa, theta, xi, rho, V0) to the Step-1 IV surface
+via the characteristic function / Carr-Madan-Lewis pricing, minimising weighted
+SSE of IV errors with differential_evolution. Feller 2*kappa*theta > xi^2 as
+soft penalty.
 
 Inputs:
     iv_surface/data/spx_iv_data.csv    — option data with market IVs
     dupire_vol/data/market_params.json — S, r, q
-
 Outputs:
-    data/heston_params.json — calibrated Heston parameters
-    plots/heston_fit.png    — model vs market IV comparison
+    data/heston_params.json — calibrated params
+    plots/heston_fit.png    — model vs market IV
 """
 
 import json
@@ -49,23 +42,17 @@ logging.basicConfig(
 logger = logging.getLogger("heston_calibration")
 
 
-# =============================================================================
-# Calibration objective
-# =============================================================================
+# --- Calibration objective ---
 
 def calibration_objective(params, S, r, q, K_arr, T_arr, market_prices, vegas,
                           opt_type_arr):
     """
-    Heston calibration objective: SSE of IV-approximation errors plus a soft
-    Feller penalty.
+    SSE of IV-approx errors plus soft Feller penalty.
 
-    Uses the first-order approximation iv_error ~ price_error / vega to avoid BS
-    inversion inside the loop; equivalent to calibrating in IV space and giving
-    balanced weight across strikes.
-
-    Inputs: params [kappa, theta, xi, rho, V0]; market S/r/q; K_arr/T_arr;
-    market_prices (BS call or put per opt_type_arr); vegas (IV-approx
-    denominator); opt_type_arr ("call"/"put"). Returns SSE + Feller penalty.
+    Uses iv_error ~ price_error/vega (first order) to skip BS inversion in the
+    loop; equivalent to IV-space calibration with balanced strike weight.
+    params: [kappa, theta, xi, rho, V0]. market_prices: BS call/put per
+    opt_type_arr. vegas: IV-approx denominator.
     """
     kappa, theta, xi, rho, V0 = params
 
@@ -74,7 +61,7 @@ def calibration_objective(params, S, r, q, K_arr, T_arr, market_prices, vegas,
             S, K_arr, T_arr, r, q, kappa, theta, xi, rho, V0,
             N_quad=N_QUAD_OPT, upper_limit=UPPER_LIMIT_OPT
         )
-        # Convert to put prices via put-call parity where needed
+        # Calls -> puts via put-call parity where needed
         put_mask = opt_type_arr == "put"
         if put_mask.any():
             model_prices = model_prices.copy()
@@ -85,14 +72,14 @@ def calibration_objective(params, S, r, q, K_arr, T_arr, market_prices, vegas,
         if np.any(~np.isfinite(model_prices)):
             return 1e10
 
-        # IV-approximation errors: price_error / vega  ≈  iv_error
+        # iv_error ~ price_error / vega
         iv_approx_errors = (model_prices - market_prices) / np.maximum(vegas, VEGA_FLOOR)
         sse = np.sum(iv_approx_errors**2)
 
     except Exception:
         return 1e10
 
-    # Soft Feller penalty: 2*kappa*theta > xi^2
+    # Soft Feller penalty (2*kappa*theta > xi^2)
     feller_gap = xi**2 - 2.0 * kappa * theta
     if feller_gap > 0:
         sse += FELLER_PENALTY * feller_gap**2
@@ -100,28 +87,17 @@ def calibration_objective(params, S, r, q, K_arr, T_arr, market_prices, vegas,
     return sse
 
 
-# =============================================================================
-# Main calibration routine
-# =============================================================================
+# --- Main calibration routine ---
 
 def load_market_data():
-    """
-    Load market data from Steps 1 and 2.
-
-    Returns
-    -------
-    dict
-        Contains: S, r, q, df (option DataFrame), iv_surface, ttm_grid, log_m_grid.
-    """
-    # Market parameters
+    """Load Step 1/2 market data; returns dict (S, r, q, df, iv_surface,
+    ttm_grid, log_m_grid)."""
     with open(DUPIRE_DIR / "data" / "market_params.json") as f:
         mkt = json.load(f)
     S, r, q = mkt["S"], mkt["r"], mkt["q"]
 
-    # Option data
     df = pd.read_csv(IV_DIR / "data" / "spx_iv_data.csv")
 
-    # Grids
     iv_surface = np.load(IV_DIR / "arrays" / "iv_surface.npy")
     ttm_grid = np.load(IV_DIR / "arrays" / "ttm_grid.npy")
     log_m_grid = np.load(IV_DIR / "arrays" / "log_m_grid.npy")
@@ -138,18 +114,17 @@ def load_market_data():
 
 def prepare_calibration_data(market_data, max_options=2000):
     """
-    Build a clean calibration dataset: select OTM options within TTM/IV sanity
-    bounds, stratified-subsample across a TTM x moneyness grid if too many, and
-    return BS vegas for the IV-approximation normalisation in the objective.
+    Build calibration set: select OTM options within TTM/IV bounds,
+    stratified-subsample over TTM x moneyness if too many, return BS vegas for
+    the objective's IV-approx normalisation.
 
-    Inputs: market_data (from load_market_data()), max_options.
     Returns K_arr, T_arr, iv_market, market_prices, vegas (raw dollar vegas),
     opt_type_arr.
     """
     S, r, q = market_data["S"], market_data["r"], market_data["q"]
     df = market_data["df"].copy()
 
-    # OTM selection: puts for k < 0, calls for k >= 0 (preserves left-wing skew)
+    # OTM: puts for k<0, calls for k>=0 (preserves left-wing skew)
     fwd_moneyness = df["strike"] / (S * np.exp((r - q) * df["ttm"]))
     otm_mask = (
         ((fwd_moneyness < 1.0) & (df["option_type"] == "put")) |
@@ -157,26 +132,22 @@ def prepare_calibration_data(market_data, max_options=2000):
     )
     df = df[otm_mask].copy()
 
-    # Moneyness bounds: 0.80 <= K/F(T) <= 1.20 (forward moneyness).
-    # Drops deep-OTM call wings where the Heston Fourier pricer underflows to
-    # zero (near-zero price/vega), so BS inversion fails.
+    # 0.80 <= K/F(T) <= 1.20; drops deep-OTM call wings where the Fourier pricer
+    # underflows to ~0 price/vega and BS inversion fails.
     fwd_moneyness = fwd_moneyness[otm_mask]
     df = df[(fwd_moneyness >= 0.80) & (fwd_moneyness <= 1.20)]
 
-    # TTM bounds: 2 weeks to 2 years
+    # TTM 2 weeks to 2 years
     df = df[(df["ttm"] >= 0.04) & (df["ttm"] <= 2)]
 
-    # Valid IV
-    df = df[df["iv"].between(0.01, 2.0)]
-
-    # Drop duplicates on (strike, ttm)
+    df = df[df["iv"].between(0.01, 2.0)]   # valid IV
     df = df.drop_duplicates(subset=["strike", "ttm"])
 
     logger.info(f"Calibration pool: {len(df)} OTM options after filtering "
                 f"({(df['option_type']=='put').sum()} puts, "
                 f"{(df['option_type']=='call').sum()} calls)")
 
-    # Stratified subsample across 5×5 TTM × forward-moneyness grid
+    # Stratified subsample over 5x5 TTM x fwd-moneyness grid
     if len(df) > max_options:
         df = df.reset_index(drop=True)
         fwd_m_col = df["strike"] / (S * np.exp((r - q) * df["ttm"]))
@@ -190,7 +161,7 @@ def prepare_calibration_data(market_data, max_options=2000):
             df.groupby("_strata", group_keys=False)
             .apply(lambda g: g.sample(min(len(g), per_stratum), random_state=SEED))
         )
-        # Top up to max_options with a random draw from the remainder
+        # Top up to max_options from the remainder
         if len(sampled) < max_options:
             remaining = df.loc[~df.index.isin(sampled.index)]
             n_extra = min(max_options - len(sampled), len(remaining))
@@ -206,12 +177,12 @@ def prepare_calibration_data(market_data, max_options=2000):
 
     K_arr       = df["strike"].values.astype(np.float64)
     T_arr       = df["ttm"].values.astype(np.float64)
-    # spx_iv_data.csv:`iv` is the SSVI-fitted IV (raw quote = `iv_yf`).
-    # We use SSVI as the reference for both IV and BS-price errors throughout.
+    # `iv` = SSVI-fitted IV (raw quote = `iv_yf`); SSVI is the reference for both
+    # IV and BS-price errors throughout.
     iv_market   = df["iv"].values.astype(np.float64)
-    opt_type_arr = df["option_type"].values   # "call" or "put" per option
+    opt_type_arr = df["option_type"].values
 
-    # SSVI BS prices from SSVI IVs — call or put via put-call parity
+    # SSVI BS prices from SSVI IVs (call, or put via parity)
     market_prices = np.array([
         bs_call_price(S, K_arr[i], T_arr[i], r, q, iv_market[i])
         if opt_type_arr[i] == "call" else
@@ -220,7 +191,7 @@ def prepare_calibration_data(market_data, max_options=2000):
         for i in range(len(K_arr))
     ])
 
-    # Raw BS dollar vegas — used in objective as IV-approximation denominator
+    # Raw BS dollar vegas (objective's IV-approx denominator)
     vegas = np.array([
         bs_vega(S, K_arr[i], T_arr[i], r, q, iv_market[i])
         for i in range(len(K_arr))
@@ -231,11 +202,8 @@ def prepare_calibration_data(market_data, max_options=2000):
 
 def calibrate_heston(market_data, max_options=2000):
     """
-    Calibrate Heston parameters to market implied volatilities via
-    differential_evolution (global) followed by a Nelder-Mead polish.
-
-    Inputs: market_data (from load_market_data()), max_options.
-    Returns calibrated kappa, theta, xi, rho, V0 plus fit diagnostics.
+    Calibrate Heston to market IVs via differential_evolution (global) then a
+    Nelder-Mead polish. Returns params (kappa, theta, xi, rho, V0) + fit diagnostics.
     """
     S, r, q = market_data["S"], market_data["r"], market_data["q"]
     K_arr, T_arr, iv_market, market_prices, vegas, opt_type_arr = prepare_calibration_data(
@@ -244,13 +212,13 @@ def calibrate_heston(market_data, max_options=2000):
 
     logger.info("Starting Heston calibration via differential evolution...")
 
-    # Parameter bounds: [kappa, theta, xi, rho, V0]
+    # Bounds [kappa, theta, xi, rho, V0]
     bounds = [
-        (0.1, 10.0),      # kappa: mean reversion speed
-        (0.005, 0.50),    # theta: long-run variance (equiv to ~7% to ~70% vol)
+        (0.1, 10.0),      # kappa: mean reversion
+        (0.005, 0.50),    # theta: long-run var (~7%-70% vol)
         (0.05, 2.0),      # xi: vol of vol
-        (-0.99, 0.10),    # rho: spot-vol correlation (slightly positive allowed)
-        (0.005, 0.50),    # V0: initial variance
+        (-0.99, 0.10),    # rho: spot-vol corr (slight positive allowed)
+        (0.005, 0.50),    # V0: initial var
     ]
 
     result = optimize.differential_evolution(
@@ -261,7 +229,7 @@ def calibrate_heston(market_data, max_options=2000):
         maxiter=MAX_ITER,
         tol=1e-10,
         atol=1e-10,
-        polish=False,    # local refinement done separately below
+        polish=False,    # polished separately below
         workers=N_WORKERS,
         updating="deferred",
         disp=False,
@@ -270,7 +238,7 @@ def calibrate_heston(market_data, max_options=2000):
     logger.info(f"Differential evolution converged: fun={result.fun:.6e}, "
                 f"nfev={result.nfev}")
 
-    # Local refinement with Nelder-Mead
+    # Nelder-Mead polish
     result_local = optimize.minimize(
         calibration_objective,
         result.x,
@@ -282,7 +250,7 @@ def calibrate_heston(market_data, max_options=2000):
     logger.info(f"Nelder-Mead polish: fun={result_local.fun:.6e}, "
                 f"nfev={result_local.nfev}")
 
-    # Clip back to bounds — Nelder-Mead is unconstrained and can violate them.
+    # Clip back to bounds (Nelder-Mead is unconstrained)
     lo = [b[0] for b in bounds]
     hi = [b[1] for b in bounds]
     clipped = np.clip(result_local.x, lo, hi)
@@ -291,7 +259,7 @@ def calibrate_heston(market_data, max_options=2000):
                        f"{result_local.x} → {clipped}")
     kappa, theta, xi, rho, V0 = clipped
 
-    # Compute fit diagnostics — higher-accuracy pricing
+    # Fit diagnostics (higher-accuracy pricing)
     heston_call_prices = heston_call_price_vectorised(
         S, K_arr, T_arr, r, q, kappa, theta, xi, rho, V0,
         N_quad=N_QUAD_DIAG, upper_limit=UPPER_LIMIT_DIAG
@@ -302,7 +270,7 @@ def calibrate_heston(market_data, max_options=2000):
         model_prices_diag[put_mask] -= (
             S * np.exp(-q * T_arr[put_mask]) - K_arr[put_mask] * np.exp(-r * T_arr[put_mask])
         )
-    # IV-space diagnostics — invert model prices back to implied vol
+    # IV-space diagnostics: invert model prices to IV
     iv_model = np.array([
         bs_implied_vol(
             model_prices_diag[i], S, K_arr[i], T_arr[i], r, q,
@@ -316,8 +284,8 @@ def calibrate_heston(market_data, max_options=2000):
     iv_rmse = float(np.sqrt(np.mean(iv_errors**2)))
     iv_me   = float(np.mean(iv_errors))
 
-    # Price-space diagnostics vs the SSVI BS prices (`market_prices` here is
-    # BS(S, K, T, r, q, iv_ssvi) by construction — see prepare_calibration_data).
+    # Price-space diagnostics vs SSVI BS prices (market_prices = BS(...,iv_ssvi),
+    # see prepare_calibration_data).
     price_valid = np.isfinite(model_prices_diag) & (market_prices > 0.01)
     price_err_pct = (100.0 * (model_prices_diag[price_valid] - market_prices[price_valid])
                      / market_prices[price_valid])
@@ -366,17 +334,14 @@ def calibrate_heston(market_data, max_options=2000):
     return params, K_arr, T_arr, iv_market, iv_model
 
 
-# =============================================================================
-# Plotting
-# =============================================================================
+# --- Plotting ---
 
 def plot_heston_fit(K_arr, T_arr, iv_market, iv_model, S, r, q, params):
     """
-    Plot Heston calibration fit: model vs SSVI implied volatility.
+    Plot Heston fit: model vs SSVI IV (4 panels).
 
-    Inputs: K_arr/T_arr (strikes, maturities); iv_market (SSVI-fitted IV, column
-    `iv` in spx_iv_data.csv — not the raw mid `iv_yf`) and iv_model (Heston IV,
-    NaN where inversion failed); S; r, q; params (for annotation).
+    iv_market: SSVI-fitted IV (column `iv`, not raw mid `iv_yf`). iv_model:
+    Heston IV, NaN where inversion failed.
     """
     moneyness = K_arr / (S * np.exp((r - q) * T_arr))
     valid = np.isfinite(iv_model)
@@ -386,7 +351,7 @@ def plot_heston_fit(K_arr, T_arr, iv_market, iv_model, S, r, q, params):
     fig.suptitle("Heston Calibration — Model vs SSVI IV",
                  fontsize=14, fontweight="bold")
 
-    # (a) Scatter: model IV vs SSVI IV
+    # (a) model IV vs SSVI IV
     ax = axes[0, 0]
     sc = ax.scatter(iv_market[valid] * 100, iv_model[valid] * 100,
                     c=T_arr[valid], cmap="viridis", alpha=0.7, s=20, edgecolors="none")
@@ -426,7 +391,7 @@ def plot_heston_fit(K_arr, T_arr, iv_market, iv_model, S, r, q, params):
     ax.set_ylabel("IV Error (vol pts %)")
     ax.set_title("(d) IV Error vs TTM")
 
-    # Parameter annotation
+    # Param annotation
     txt = (
         f"κ={params['kappa']:.4f}  θ={params['theta']:.4f}  "
         f"ξ={params['xi']:.4f}  ρ={params['rho']:.4f}  V₀={params['V0']:.4f}\n"
@@ -444,36 +409,25 @@ def plot_heston_fit(K_arr, T_arr, iv_market, iv_model, S, r, q, params):
     logger.info(f"Saved Heston fit plot → {out_path}")
 
 
-# =============================================================================
-# Entry point
-# =============================================================================
+# --- Entry point ---
 
 def run(max_options=2000):
-    """
-    Run the Heston calibration pipeline.
-
-    Inputs: max_options (max options used in calibration).
-    Returns the calibrated Heston parameters.
-    """
+    """Run the Heston calibration pipeline; returns calibrated params."""
     logger.info("=" * 60)
     logger.info("STEP 3a: Heston Model Calibration")
     logger.info("=" * 60)
 
-    # Load data
     market_data = load_market_data()
 
-    # Calibrate
     params, K_arr, T_arr, iv_market, iv_model = calibrate_heston(
         market_data, max_options=max_options
     )
 
-    # Save parameters
     out_path = DATA_DIR / "heston_params.json"
     with open(out_path, "w") as f:
         json.dump(params, f, indent=2)
     logger.info(f"Saved Heston parameters → {out_path}")
 
-    # Plot
     plot_heston_fit(K_arr, T_arr, iv_market, iv_model,
                     market_data["S"], market_data["r"], market_data["q"], params)
 

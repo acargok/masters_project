@@ -1,37 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LSV Model Validation — Checkpoint 2
-=====================================
-Part of an LSV (Local Stochastic Volatility) model for pricing Asian options.
-Master's Thesis, Imperial College London.
+LSV validation — Checkpoint 2 (Master's Thesis, Imperial College London).
 
-Validates the calibrated leverage function L(t, S) by repricing vanilla
-European options under the full LSV dynamics via Monte Carlo simulation.
-
-The LSV dynamics are:
-    dS = (r - q) S dt + L(t, S) sqrt(V) S dW^S
-    dV = kappa (theta - V) dt + xi sqrt(V) dW^V
-    d<W^S, W^V> = rho dt
-
-L(t, S) is interpolated from the leverage surface computed in Step 3b.
-
-The repricing errors are compared to the Dupire model (Step 2) to confirm
-that the LSV model reproduces the vanilla market at least as well.
+Validates the calibrated leverage L(t, S) by MC-repricing vanilla European
+options under the full LSV dynamics (dS=(r-q)S dt + L(t,S) sqrt(V) S dW^S,
+dV=kappa(theta-V)dt + xi sqrt(V)dW^V, d<W^S,W^V>=rho dt; L interpolated from the
+Step-3b surface). Errors compared to Dupire (Step 2) as a benchmark.
 
 Inputs:
-    lsv/arrays/leverage_surface.npy      — L(t, S) grid
-    lsv/arrays/leverage_spot_grid.npy    — spot grid
-    lsv/arrays/leverage_time_grid.npy    — time grid
-    lsv/data/heston_params.json          — Heston parameters
+    lsv_heston/arrays/leverage_{surface,spot_grid,time_grid}.npy — L(t,S) and grids
+    lsv_heston/data/heston_params.json   — Heston params
     dupire_vol/data/market_params.json   — S, r, q
     dupire_vol/data/repricing_errors.csv — Dupire repricing for comparison
     iv_surface/data/spx_iv_data.csv      — option data
-
 Outputs:
     data/lsv_repricing_errors.csv       — MC repricing results
-    data/validation_summary.json        — summary statistics
-    plots/lsv_repricing_validation.png  — scatter + histogram (mirrors Dupire)
+    data/validation_summary.json        — summary stats
+    plots/lsv_repricing_validation.png  — scatter + histogram
     plots/lsv_vs_dupire_comparison.png  — side-by-side comparison
 """
 
@@ -61,37 +47,29 @@ logging.basicConfig(
 logger = logging.getLogger("lsv_validation")
 
 
-# =============================================================================
-# Data loading
-# =============================================================================
+# --- Data loading ---
 
 def load_validation_inputs():
     """
-    Load all inputs for LSV validation. Dupire repricing results are read from
-    the Step 2 CSV rather than recomputed.
+    Load LSV-validation inputs (Dupire repricing read from Step-2 CSV, not recomputed).
 
-    Returns a dict with S, r, q, heston, leverage_interp, leverage_surface,
-    spot_grid, time_grid, dupire_df (Step 2 repricing), dupire_interp,
-    log_m_grid, ttm_grid_dup, and fwd_curve.
+    Returns dict: S, r, q, heston, leverage_interp, leverage_surface, spot_grid,
+    time_grid, dupire_df, dupire_interp, log_m_grid, ttm_grid_dup, fwd_curve.
     """
-    # Market params
     with open(DUPIRE_DIR / "data" / "market_params.json") as f:
         mkt = json.load(f)
     S, r, q = mkt["S"], mkt["r"], mkt["q"]
 
-    # Heston params
     with open(DATA_DIR / "heston_params.json") as f:
         heston = json.load(f)
 
-    # Leverage surface
     leverage_surface = np.load(ARRAY_DIR / "leverage_surface.npy")
     spot_grid = np.load(ARRAY_DIR / "leverage_spot_grid.npy")
     time_grid = np.load(ARRAY_DIR / "leverage_time_grid.npy")
 
-    # Build 2D interpolator for L(t, S) — note: (spot, time) ordering.
-    # time_grid starts at the first positive recorded step (t=0 slice is excluded
-    # from the saved surface because the particle cloud is degenerate at t=0).
-    # Early-time queries are clamped to time_grid[0] via bounds_error=False.
+    # 2D L(t,S) interp, (spot, time) ordering. time_grid starts at first positive
+    # recorded step (t=0 slice excluded: cloud degenerate at t=0); early-time
+    # queries clamp to time_grid[0] via bounds_error=False.
     leverage_interp = interpolate.RegularGridInterpolator(
         (spot_grid, time_grid),
         leverage_surface,
@@ -100,7 +78,7 @@ def load_validation_inputs():
         fill_value=None,   # clamp to nearest boundary
     )
 
-    # Dupire local vol surface and forward curve — needed for Gyöngy diagnostic
+    # Dupire local vol surface and forward curve (for Gyöngy diagnostic)
     local_vol = np.load(DUPIRE_DIR / "arrays" / "local_vol_surface.npy")
     ttm_grid_dup = np.load(IV_DIR / "arrays" / "ttm_grid.npy")
     log_m_grid_dup = np.load(IV_DIR / "arrays" / "log_m_grid.npy")
@@ -117,7 +95,7 @@ def load_validation_inputs():
     else:
         fwd_curve = fwd_prices
 
-    # Dupire repricing results from Step 2 (no recomputation)
+    # Dupire repricing from Step 2 (no recompute)
     dupire_df = pd.read_csv(DUPIRE_DIR / "data" / "repricing_errors.csv")
 
     logger.info(f"Loaded: S={S:.2f}, leverage surface {leverage_surface.shape}, "
@@ -138,9 +116,7 @@ def load_validation_inputs():
     }
 
 
-# =============================================================================
-# Monte Carlo simulation under LSV dynamics
-# =============================================================================
+# --- Monte Carlo simulation under LSV dynamics ---
 
 def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
                               steps_per_year=MC_STEPS_PER_YEAR,
@@ -148,17 +124,11 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
                               seed=MC_SEED,
                               variance_scheme="qe"):
     """
-    Reprice vanilla European options under the LSV dynamics by Monte Carlo;
-    Dupire prices come from the Step 2 CSV for a head-to-head comparison.
+    MC-reprice vanilla Europeans under LSV; Dupire prices from Step-2 CSV.
 
-    LSV dynamics:
-        S_{t+dt} = S_t + (r-q) S_t dt + L(t,S_t) sqrt(V_t) S_t sqrt(dt) Z1
-        V_{t+dt} = V_t + kappa(theta-V_t) dt + xi sqrt(V_t) sqrt(dt) Z2
-
-    Inputs: inputs (from load_validation_inputs()); n_paths; steps_per_year;
-    n_reprice (0 = all in-bounds); seed; variance_scheme ("euler"/"qe").
-    Returns (result_df, diag_snapshots): the repricing DataFrame (strike, ttm,
-    option_type, prices and IV/price errors vs SSVI) and the Gyöngy-diagnostic
+    n_reprice: 0 = all in-bounds. variance_scheme: "euler"/"qe".
+    Returns (result_df, diag_snapshots): repricing DataFrame (strike, ttm,
+    option_type, prices, IV/price errors vs SSVI) and Gyöngy-diagnostic
     snapshots keyed by step.
     """
     S0 = inputs["S"]
@@ -178,8 +148,7 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
 
     rng = np.random.default_rng(seed)
 
-    # Use the Dupire repricing CSV as the option pool — every selected option
-    # already has a pre-computed Dupire price from Step 2.
+    # Option pool = Dupire repricing CSV (each row has a Step-2 Dupire price)
     spot_min, spot_max = spot_grid[0], spot_grid[-1]
     t_min, t_max = time_grid[0], time_grid[-1]
 
@@ -204,7 +173,6 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
     logger.info(f"Repricing {len(sample)} options via LSV MC ({n_paths:,} paths); "
                 f"Dupire prices from Step 2 CSV")
 
-    # Simulation setup
     T_max = sample["ttm"].max()
     n_steps = max(int(T_max * steps_per_year), 20)
     dt = T_max / n_steps
@@ -212,7 +180,7 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
 
     t_schedule = np.arange(n_steps + 1) * dt
 
-    # Map each option to nearest time step
+    # Map each option to nearest step
     sample["step_idx"] = sample["ttm"].apply(
         lambda T: int(np.argmin(np.abs(t_schedule - T)))
     )
@@ -221,18 +189,16 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
     logger.info(f"  Simulation: {n_steps} steps, dt={dt:.6f}, T_max={T_max:.4f}")
     logger.info(f"  {len(required_steps)} distinct maturities required")
 
-    # Gyöngy diagnostic: snapshot at 25/50/75/100% of the simulation
+    # Gyöngy diagnostic snapshots at 25/50/75/100% of the sim
     diag_steps = {max(1, int(f * n_steps)) for f in (0.25, 0.50, 0.75, 1.00)}
     diag_snapshots = {}  # step -> {"t", "S", "V", "L"}
 
-    # Storage for LSV spot levels at required maturities
-    lsv_step_spots = {}
+    lsv_step_spots = {}   # LSV spots at required maturities
 
-    # Initialise LSV paths
     S_lsv = np.full(n_paths, S0, dtype=np.float64)
     V_t = np.full(n_paths, V0, dtype=np.float64)
 
-    # Lazy import to avoid circular import; particle_method exposes QE helpers.
+    # Lazy import avoids circular import; particle_method exposes QE helpers
     from particle_method import step_variance_qe, step_spot_qe_bk
 
     if variance_scheme not in ("euler", "qe"):
@@ -242,7 +208,7 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
     for step in range(1, n_steps + 1):
         t = (step - 1) * dt
 
-        # --- Leverage at start of step ---
+        # Leverage at start of step
         S_clamped = np.clip(S_lsv, spot_grid[0], spot_grid[-1])
         t_clamped = np.clip(t, time_grid[0], time_grid[-1])
         pts = np.column_stack([S_clamped, np.full(n_paths, t_clamped)])
@@ -251,7 +217,7 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
 
         V_pos = np.maximum(V_t, 0.0)
 
-        # Gyöngy diagnostic snapshot: (S_t, V_t^+, L(t,S_t)) before state is advanced
+        # Snapshot (S_t, V_t^+, L(t,S_t)) before advancing state
         if step in diag_steps:
             diag_snapshots[step] = {
                 "t": t,
@@ -285,21 +251,18 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
             S_lsv = np.exp(log_S)
             V_t = V_new
 
-        # Record spots at required maturities
         if step in required_steps:
             lsv_step_spots[step] = S_lsv.copy()
 
-        # Progress
         if step % max(1, n_steps // 5) == 0:
             logger.info(f"  Step {step}/{n_steps} | "
                         f"LSV S: [{S_lsv.min():.0f}, {S_lsv.max():.0f}]")
 
     logger.info("  Simulation complete. Computing payoffs...")
 
-    # Reprice each option. The `iv_ssvi` column upstream is the SSVI-fitted
-    # IV (sourced from spx_iv_data.csv:iv); we rebuild the SSVI BS price
-    # from it and use that as the comparison target rather than the raw
-    # market mid.
+    # Reprice each option. `iv_ssvi` is the SSVI-fitted IV (from
+    # spx_iv_data.csv:iv); rebuild the SSVI BS price as comparison target (not
+    # the raw market mid).
     records = []
     for _, row in sample.iterrows():
         K = row["strike"]
@@ -325,11 +288,11 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
         lsv_price = disc * payoff_lsv.mean()
         lsv_std = disc * payoff_lsv.std() / np.sqrt(n_paths)
 
-        # IV-space error for LSV (vs SSVI)
+        # IV-space error vs SSVI
         iv_lsv = bs_iv(lsv_price, S0, K, T, r, q, opt_type)
         lsv_iv_err_bps = (iv_lsv - iv_ssvi) * 10000 if np.isfinite(iv_lsv) else np.nan
 
-        # Price-space error vs the SSVI BS price
+        # Price-space error vs SSVI BS price
         lsv_vs_ssvi = (100.0 * (lsv_price - ssvi_price) / ssvi_price
                        if abs(ssvi_price) > 0.01 else np.nan)
         dup_vs_ssvi = (100.0 * (dup_price - ssvi_price) / ssvi_price
@@ -357,35 +320,30 @@ def lsv_monte_carlo_reprice(inputs, n_paths=MC_N_PATHS,
     return result_df, diag_snapshots
 
 
-# =============================================================================
-# Gyöngy projection diagnostic
-# =============================================================================
+# --- Gyöngy projection diagnostic ---
 
 def compute_gyongy_diagnostic(diag_snapshots, S0, r, q, dupire_interp,
                                log_m_grid, ttm_grid, fwd_curve,
                                n_bins=20, min_paths=100):
     """
-    Check the Gyöngy projection condition on the validation paths.
+    Check the Gyöngy projection on validation paths.
 
-    At each diagnostic time slice, bins paths by spot and compares
-        mean( L(t, S_t)^2 * V_t | S_t in bin )
-    against the Dupire target sigma_Dupire(t, bin_center)^2. Ratio = 1 means the
-    condition holds exactly; ratio > 1 means projected variance exceeds the
-    target, causing positive IV bias (overpricing).
-
-    Returns a DataFrame with one row per (time slice, spot bin): step, time,
-    spot_bin_center, n_paths, mean_L2V, dupire_var, ratio.
+    Per time slice, bins paths by spot and compares mean(L(t,S_t)^2 V_t | bin)
+    against Dupire target sigma_Dupire(t, bin_center)^2. Ratio 1 = exact; >1 =
+    projected variance exceeds target -> positive IV bias (overpricing).
+    Returns DataFrame, one row per (slice, bin): step, time, spot_bin_center,
+    n_paths, mean_L2V, dupire_var, ratio.
     """
     records = []
     for step in sorted(diag_snapshots):
         snap = diag_snapshots[step]
         t = snap["t"]
         S_arr = snap["S"]
-        V_arr = snap["V"]   # already max(V, 0)
+        V_arr = snap["V"]   # already >= 0
         L_arr = snap["L"]
         L2V = L_arr ** 2 * V_arr
 
-        # Bin between 5th–95th percentile to keep bins populated
+        # Bin over 5th-95th pct to keep bins populated
         S_lo = np.percentile(S_arr, 5)
         S_hi = np.percentile(S_arr, 95)
         if S_lo >= S_hi:
@@ -404,7 +362,7 @@ def compute_gyongy_diagnostic(diag_snapshots, S0, r, q, dupire_interp,
             bin_center = 0.5 * (edges[b] + edges[b + 1])
             mean_L2V = float(L2V[mask].mean())
 
-            # Dupire local variance at (bin_center, t) using per-expiry forward
+            # Dupire local variance at (bin_center, t), per-expiry forward
             F_0_t = float(np.interp(t, fwd_curve[:, 0], fwd_curve[:, 1]))
             F_0_t = max(F_0_t, 1e-6)
             log_m = np.log(bin_center / F_0_t)
@@ -426,24 +384,14 @@ def compute_gyongy_diagnostic(diag_snapshots, S0, r, q, dupire_interp,
     return pd.DataFrame(records)
 
 
-# =============================================================================
-# Summary statistics
-# =============================================================================
+# --- Summary statistics ---
 
 def compute_summary(result_df):
-    """
-    Compute validation summary statistics from the repricing results.
-
-    Inputs: result_df (lsv_price, dupire_price, and comparison columns).
-    Returns a dict of summary statistics.
-    """
+    """Validation summary stats from repricing results; returns dict."""
     valid = result_df.dropna(subset=["lsv_iv_error_bps"])
 
-    # LSV IV error in bp vs SSVI
-    iv_err = valid["lsv_iv_error_bps"]
-    # LSV vs SSVI (price %)
-    lsv_ssvi = valid.dropna(subset=["lsv_vs_ssvi_pct"])["lsv_vs_ssvi_pct"]
-    # Dupire vs SSVI (price %)
+    iv_err = valid["lsv_iv_error_bps"]                                        # bp vs SSVI
+    lsv_ssvi = valid.dropna(subset=["lsv_vs_ssvi_pct"])["lsv_vs_ssvi_pct"]    # price %
     dup_ssvi = valid.dropna(subset=["dupire_vs_ssvi_pct"])["dupire_vs_ssvi_pct"]
 
     summary = {
@@ -464,7 +412,7 @@ def compute_summary(result_df):
         "dupire_vs_ssvi_mae_pct": float(dup_ssvi.abs().mean()),
     }
 
-    # Filtered by min SSVI price
+    # Filtered by min SSVI price floor
     for min_price in [10, 20, 50]:
         f = valid[valid["ssvi_price"] >= min_price]
         if len(f) > 0:
@@ -508,25 +456,20 @@ def compute_summary(result_df):
     return summary
 
 
-# =============================================================================
-# Plotting
-# =============================================================================
+# --- Plotting ---
 
 def plot_validation(result_df, summary):
     """
-    Generate the two LSV validation figures:
-      1. lsv_repricing_validation.png — LSV and Dupire vs SSVI (4-panel)
-      2. lsv_vs_dupire_comparison.png — LSV vs Dupire head-to-head (4-panel)
-
-    Inputs: result_df (repricing results) and summary (statistics).
+    Two validation figures: lsv_repricing_validation.png (LSV/Dupire vs SSVI,
+    4-panel) and lsv_vs_dupire_comparison.png (head-to-head, 4-panel).
     """
     valid = result_df.dropna(subset=["lsv_iv_error_bps"])
 
-    # ===== Figure 1: Both models vs SSVI =====
+    # Figure 1: both models vs SSVI
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle("LSV Model Validation — Checkpoint 2", fontsize=14, fontweight="bold")
 
-    # (a) Scatter: LSV price vs SSVI price
+    # (a) LSV price vs SSVI price
     ax = axes[0, 0]
     sc = ax.scatter(valid["ssvi_price"], valid["lsv_price"],
                     c=valid["ttm"], cmap="viridis", alpha=0.7, s=20, edgecolors="none")
@@ -539,7 +482,7 @@ def plot_validation(result_df, summary):
     ax.set_title("(a) LSV Price vs SSVI Price")
     ax.legend(loc="upper left")
 
-    # (b) LSV vs SSVI error histogram
+    # (b) error histogram, both models vs SSVI
     ax = axes[0, 1]
     lsv_ssvi = valid.dropna(subset=["lsv_vs_ssvi_pct"])
     dup_ssvi = valid.dropna(subset=["dupire_vs_ssvi_pct"])
@@ -563,7 +506,7 @@ def plot_validation(result_df, summary):
     ax.set_title("(c) LSV vs SSVI by Fwd Log-Moneyness")
     plt.colorbar(sc, ax=ax, label="TTM (years)")
 
-    # (d) Scatter: LSV price vs Dupire price
+    # (d) LSV price vs Dupire price
     ax = axes[1, 1]
     sc = ax.scatter(valid["dupire_price"], valid["lsv_price"],
                     c=valid["ttm"], cmap="viridis", alpha=0.7, s=20, edgecolors="none")
@@ -582,14 +525,12 @@ def plot_validation(result_df, summary):
     plt.close()
     logger.info(f"Saved validation plot → {out_path}")
 
-    # ===== Figure 2: LSV vs Dupire head-to-head =====
+    # Figure 2: LSV vs Dupire head-to-head
     _plot_lsv_vs_dupire(valid, summary)
 
 
 def _plot_lsv_vs_dupire(valid, summary):
-    """
-    Head-to-head LSV vs Dupire comparison — IV error in basis points.
-    """
+    """Head-to-head LSV vs Dupire: IV error in basis points (4-panel)."""
     valid = valid.dropna(subset=["lsv_iv_error_bps"])
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle("LSV IV Error (vs SSVI IV) — basis points",
@@ -612,7 +553,7 @@ def _plot_lsv_vs_dupire(valid, summary):
     pad = (y_hi - y_lo) * 0.3
     ax.set_ylim(y_lo - pad, y_hi + pad)
 
-    # (b) Same but filtered to price >= $10
+    # (b) same, filtered to price >= $10
     ax = axes[0, 1]
     liq = valid[valid["ssvi_price"] >= 10]
     err_liq = liq["lsv_iv_error_bps"]
@@ -655,26 +596,17 @@ def _plot_lsv_vs_dupire(valid, summary):
     logger.info(f"Saved LSV vs Dupire comparison → {out_path}")
 
 
-# =============================================================================
-# Entry point
-# =============================================================================
+# --- Entry point ---
 
 def run(n_paths=MC_N_PATHS, n_reprice=MC_N_REPRICE, seed=MC_SEED,
         variance_scheme="qe"):
-    """
-    Run the LSV validation pipeline.
-
-    Inputs: n_paths (MC paths); n_reprice (options to reprice); seed;
-    variance_scheme. Returns (result_df, summary).
-    """
+    """Run the LSV validation pipeline; returns (result_df, summary)."""
     logger.info("=" * 60)
     logger.info("CHECKPOINT 2: LSV Model Validation")
     logger.info("=" * 60)
 
-    # Load inputs
     inputs = load_validation_inputs()
 
-    # Run MC repricing
     result_df, diag_snapshots = lsv_monte_carlo_reprice(
         inputs, n_paths=n_paths, n_reprice=n_reprice, seed=seed,
         variance_scheme=variance_scheme,
@@ -684,15 +616,12 @@ def run(n_paths=MC_N_PATHS, n_reprice=MC_N_REPRICE, seed=MC_SEED,
         logger.error("No repricing results. Validation failed.")
         return result_df, {}
 
-    # Save repricing results
     out_path = DATA_DIR / "lsv_repricing_errors.csv"
     result_df.to_csv(out_path, index=False)
     logger.info(f"Saved repricing errors → {out_path}")
 
-    # Summary
     summary = compute_summary(result_df)
 
-    # Save summary
     out_path = DATA_DIR / "validation_summary.json"
     with open(out_path, "w") as f:
         json.dump(summary, f, indent=2)
@@ -721,7 +650,6 @@ def run(n_paths=MC_N_PATHS, n_reprice=MC_N_REPRICE, seed=MC_SEED,
                 f"(1.0 = perfect calibration, >1 = positive IV bias)"
             )
 
-    # Plots
     plot_validation(result_df, summary)
 
     return result_df, summary

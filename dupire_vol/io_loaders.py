@@ -42,7 +42,7 @@ def load_iv_surface() -> tuple:
         logger.info(f"Loaded q_eff grid: [{q_eff_grid.min():.4f}, {q_eff_grid.max():.4f}]")
     else:
         q_eff_grid = None
-        logger.info("No q_eff_grid.npy — using constant q from Step 1 market_params.json")
+        logger.info("No q_eff_grid.npy found — will use stored constant q from Step 1 market_params.json")
 
     df = pd.read_csv(os.path.join(IV_DIR_DATA, "spx_iv_data.csv"))
 

@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Unit tests for iv_surface_ssvi.py
-=================================
-Tests the pure computational functions (BSM pricing, IV inversion, filtering,
-surface interpolation, validation) without requiring the raw data extract.
-
-Run:
-    cd iv_surface
-    python -m pytest test_iv_surface.py -v
+Unit tests for iv_surface_ssvi.py — pure computational functions (BSM pricing,
+IV inversion, filtering, surface interpolation, validation), no raw data
+needed. Run: python -m pytest test_iv_surface.py -v
 """
 
 import numpy as np
@@ -16,13 +11,10 @@ import pandas as pd
 import pytest
 from scipy.stats import norm
 
-# Import the module under test
 import iv_surface_ssvi as iv
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Fixtures
-# ══════════════════════════════════════════════════════════════════════════════
 
 @pytest.fixture
 def market_params():
@@ -67,20 +59,9 @@ def sample_option_df(market_params):
 
 @pytest.fixture
 def iv_df_for_surface(market_params):
-    """A larger synthetic IV dataset suitable for SSVI surface building.
-
-    The current build_iv_surface() fits SSVI jointly across expiry slices and
-    requires:
-      - at least 3 expiry slices, each with >= MIN_OPTIONS_PER_SLICE options,
-      - per-option ``iv`` (used to form total variance w = iv²·T),
-      - forward log-moneyness, computed internally from a forward table.
-
-    We therefore generate 5 expiries with 30 strikes each (well above the
-    25-option threshold).  Option type is assigned relative to the per-expiry
-    forward F(T) = S·e^{(r-q)T} so the chain is consistent with the
-    forward-based OTM convention used downstream.  Expiry labels are unique per
-    slice so each maps to its own forward.
-    """
+    """Synthetic IV dataset for SSVI surface building: 5 expiries × 30 strikes
+    (above MIN_OPTIONS_PER_SLICE), per-option iv, option type vs per-expiry
+    forward F(T) = S·e^{(r-q)T}, unique expiry labels."""
     S, r, q = market_params["S"], market_params["r"], market_params["q"]
     rng = np.random.default_rng(42)
 
@@ -109,14 +90,9 @@ def iv_df_for_surface(market_params):
 
 @pytest.fixture
 def fwd_df_for_surface(iv_df_for_surface, market_params):
-    """Per-expiry forward curve matching ``iv_df_for_surface``.
-
-    build_iv_surface() and validate_surface() both take a forward table
-    (expiry, ttm, forward, q_eff) — the output schema of
-    compute_implied_forwards().  The synthetic chain is generated from a
-    constant (r, q), so the exact forward is F(T) = S·e^{(r-q)T} with
-    q_eff = q; we build the table directly to keep the fixture deterministic.
-    """
+    """Per-expiry forward table (expiry, ttm, forward, q_eff) matching
+    iv_df_for_surface. Built directly from constant (r,q):
+    F(T) = S·e^{(r-q)T}, q_eff = q."""
     S, r, q = market_params["S"], market_params["r"], market_params["q"]
     recs = []
     for expiry, grp in iv_df_for_surface.groupby("expiry"):
@@ -131,9 +107,7 @@ def fwd_df_for_surface(iv_df_for_surface, market_params):
     return pd.DataFrame(recs).sort_values("ttm").reset_index(drop=True)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Section 3: BSM Price
-# ══════════════════════════════════════════════════════════════════════════════
+# Section 3: BSM price
 
 class TestBSPrice:
     """Tests for bs_price()."""
@@ -239,9 +213,7 @@ class TestBSPrice:
         assert result == pytest.approx(expected, rel=1e-12)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Section 3: BSM Vega
-# ══════════════════════════════════════════════════════════════════════════════
+# Section 3: BSM vega
 
 class TestBSVega:
     """Tests for bs_vega()."""
@@ -282,9 +254,7 @@ class TestBSVega:
         assert analytical_vega == pytest.approx(numerical_vega, rel=1e-4)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Section 3: Implied Vol Inversion
-# ══════════════════════════════════════════════════════════════════════════════
+# Section 3: Implied vol inversion
 
 class TestImpliedVol:
     """Tests for implied_vol_single()."""
@@ -347,9 +317,7 @@ class TestImpliedVol:
         assert recovered == pytest.approx(true_vol, abs=1e-3)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Section 2: Filtering
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestFiltering:
     """Tests for filter_liquidity, filter_no_arbitrage, filter_option_type_forward."""
@@ -409,13 +377,8 @@ class TestFiltering:
         assert len(result) == len(sample_option_df)
 
     def test_filter_otm(self, sample_option_df, market_params):
-        """OTM filter (forward-based): keep calls with K>=F(T), puts with K<F(T).
-
-        The current API filters relative to the per-expiry forward F(T)
-        (from put-call parity), not the spot S.  We build the forward table
-        with compute_implied_forwards() and assert that every kept option is
-        OTM on the forward.
-        """
+        """OTM filter (forward-based): keep calls K≥F(T), puts K<F(T).
+        Filters relative to per-expiry forward F(T) from parity, not spot."""
         S, r, q = market_params["S"], market_params["r"], market_params["q"]
         fwd_df = iv.compute_implied_forwards(sample_option_df, S, r, q_fallback=q)
         fwd_map = dict(zip(fwd_df["expiry"], fwd_df["forward"]))
@@ -456,12 +419,8 @@ class TestFiltering:
         assert len(kept_puts) == len(otm_puts)
 
     def test_filter_otm_union_is_all_otm(self, sample_option_df, market_params):
-        """OTM (calls K>=F) ∪ (puts K<F) partitions the chain by the forward.
-
-        The forward-based default filter keeps exactly the OTM half of the
-        chain: OTM calls plus OTM puts.  This replaces the old "all" mode,
-        which kept every row regardless of moneyness.
-        """
+        """OTM (calls K≥F) ∪ (puts K<F) partitions the chain by the forward:
+        the default filter keeps exactly the OTM half."""
         S, r, q = market_params["S"], market_params["r"], market_params["q"]
         fwd_df = iv.compute_implied_forwards(sample_option_df, S, r, q_fallback=q)
         F = fwd_df["forward"].iloc[0]
@@ -476,14 +435,8 @@ class TestFiltering:
         assert len(result) == len(expected)
 
     def test_filter_missing_forward_drops_option(self, sample_option_df, market_params):
-        """Options whose expiry is absent from fwd_df get no forward → dropped.
-
-        The forward-based filter maps each row's expiry to F via fwd_df.  An
-        expiry missing from fwd_df yields NaN forward, so the OTM comparison is
-        False and the option is excluded.  (The old API raised ValueError on an
-        unknown string mode; the forward-based API has no string mode at all,
-        so the equivalent "unrecognised input" behaviour is silent exclusion.)
-        """
+        """Options whose expiry is absent from fwd_df get NaN forward, so the
+        OTM comparison is False and they are silently dropped."""
         S, r, q = market_params["S"], market_params["r"], market_params["q"]
         fwd_df = iv.compute_implied_forwards(sample_option_df, S, r, q_fallback=q)
         # Forward table that does not cover the option's expiry.
@@ -493,9 +446,7 @@ class TestFiltering:
         assert len(result) == 0
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Section 3: compute_implied_vols
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestComputeImpliedVols:
     """Tests for compute_implied_vols()."""
@@ -527,17 +478,13 @@ class TestComputeImpliedVols:
             assert all(result["iv"] >= 0.01)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Section 4: Surface Building
-# ══════════════════════════════════════════════════════════════════════════════
+# Section 4: Surface building
 
 class TestBuildIVSurface:
-    """Tests for build_iv_surface()."""
+    """Tests for build_iv_surface().
 
-    # NOTE: build_iv_surface() now returns a 5-tuple
-    #   (ttm_grid, log_m_grid, iv_surface, total_var_surface, ssvi_params_df)
-    # and requires a forward table (fwd_df) to map each option to its forward
-    # log-moneyness k = ln(K/F(T)).  The surface is built via a joint SSVI fit.
+    Returns a 5-tuple (ttm_grid, log_m_grid, iv_surface, total_var_surface,
+    ssvi_params_df) and needs fwd_df to map options to k = ln(K/F(T))."""
 
     def test_output_shapes(self, iv_df_for_surface, fwd_df_for_surface):
         """Surface arrays should have correct shapes."""
@@ -600,9 +547,7 @@ class TestBuildIVSurface:
             assert avg_otm_put_iv > avg_otm_call_iv
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Section 4b: Implied Forwards
-# ══════════════════════════════════════════════════════════════════════════════
+# Section 4b: Implied forwards
 
 class TestImpliedForwards:
     """Tests for compute_implied_forwards()."""
@@ -626,9 +571,8 @@ class TestImpliedForwards:
                 })
 
         df = pd.DataFrame(rows)
-        # compute_implied_forwards now takes an explicit q_fallback (used only
-        # when too few near-ATM call/put pairs exist; here all 10 strikes are
-        # within NEAR_ATM_BAND, so the forward is recovered from parity).
+        # q_fallback used only when too few near-ATM pairs; here all 10 strikes
+        # are within NEAR_ATM_BAND, so F comes from parity.
         fwd_df = iv.compute_implied_forwards(df, S, r, q_fallback=q)
         assert len(fwd_df) == 1
         assert fwd_df["forward"].iloc[0] == pytest.approx(F_true, rel=1e-6)
@@ -655,19 +599,14 @@ class TestImpliedForwards:
         assert fwd_df["q_eff"].iloc[0] == pytest.approx(q, abs=1e-5)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Section 6: Validation
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestValidation:
-    """Tests for validate_surface()."""
+    """Tests for validate_surface().
 
-    # NOTE: validate_surface() now takes the forward table (fwd_df) so it can
-    # interpolate the surface at each option's forward log-moneyness
-    # k = ln(K/F(T)) and reprice with the per-expiry q_eff.  Its signature is
-    # validate_surface(df, fwd_df, ttm_grid, log_m_grid, iv_surface, S, r,
-    #                  n_sample=...)  — q is sourced from fwd_df's q_eff, not
-    # passed separately.
+    validate_surface(df, fwd_df, ttm_grid, log_m_grid, iv_surface, S, r,
+    n_sample=...): interpolates at k = ln(K/F(T)) and reprices with the
+    per-expiry q_eff from fwd_df (q not passed separately)."""
 
     def test_validation_output_columns(self, iv_df_for_surface,
                                        fwd_df_for_surface, market_params):
@@ -720,9 +659,7 @@ class TestValidation:
         assert len(val_df) == 5
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Edge cases and integration
-# ══════════════════════════════════════════════════════════════════════════════
 
 class TestEdgeCases:
     """Edge cases and boundary conditions."""

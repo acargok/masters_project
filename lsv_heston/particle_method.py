@@ -1,38 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Particle Method for Leverage Function L(t, S) — Step 3b
-========================================================
-Part of an LSV (Local Stochastic Volatility) model for pricing Asian options.
-Master's Thesis, Imperial College London.
+Particle method for leverage L(t, S) — Step 3b (Master's Thesis, Imperial).
 
-Implements the particle method of Guyon & Henry-Labordère (2012) to calibrate
-the leverage function L(t, S) in the LSV dynamics:
-
-    dS = (r - q) S dt + L(t, S) sqrt(V) S dW^S
-    dV = kappa (theta - V) dt + xi sqrt(V) dW^V
-    d<W^S, W^V> = rho dt
-
-The leverage function is determined by the Gyöngy projection condition:
-
-    L(t, S)^2 = sigma_Dupire(t, S)^2 / E[V_t | S_t = S]
-
-where the conditional expectation is estimated via Gaussian kernel smoothing
-over the particle ensemble at each time step.
+Guyon & Henry-Labordère (2012) particle calibration of L(t, S) in the LSV
+dynamics dS=(r-q)S dt + L(t,S) sqrt(V) S dW^S, dV=kappa(theta-V)dt + xi sqrt(V)dW^V,
+d<W^S,W^V>=rho dt. Gyöngy projection: L(t,S)^2 = sigma_Dupire(t,S)^2 / E[V_t|S_t=S],
+the conditional expectation via Gaussian kernel smoothing over the particle ensemble.
 
 Inputs:
-    lsv/data/heston_params.json             — calibrated Heston parameters
+    lsv_heston/data/heston_params.json      — calibrated Heston params
     dupire_vol/arrays/local_vol_surface.npy — Dupire local vol surface
     dupire_vol/data/market_params.json      — S, r, q
     iv_surface/arrays/ttm_grid.npy          — time grid
     iv_surface/arrays/log_m_grid.npy        — log-moneyness grid
 
-Outputs (to lsv/):
-    arrays/leverage_surface.npy     — L(t, S) on a (n_S, n_T) grid
-    arrays/leverage_spot_grid.npy   — spot grid for L
-    arrays/leverage_time_grid.npy   — time grid for L
-    data/particle_log.json          — summary log (N, bandwidth, clipping, etc.)
-    plots/leverage_surface_3d.png   — 3D surface plot of L(t, S)
+Outputs (to lsv_heston/):
+    arrays/leverage_{surface,spot_grid,time_grid}.npy — L(t,S) on (n_S, n_T) and grids
+    data/particle_log.json          — summary log (N, bandwidth, clipping, ...)
+    plots/leverage_surface_3d.png   — 3D surface of L(t, S)
 """
 
 import json
@@ -62,32 +48,23 @@ logging.basicConfig(
 logger = logging.getLogger("particle_method")
 
 
-# =============================================================================
-# Data loading
-# =============================================================================
+# --- Data loading ---
 
 def load_inputs():
-    """
-    Load all inputs for the particle method.
-
-    Returns a dict with S, r, q, heston params, dupire_interp, local_vol,
-    ttm_grid, log_m_grid, and fwd_curve.
-    """
-    # Market parameters
+    """Load particle-method inputs; returns dict (S, r, q, heston, dupire_interp,
+    local_vol, ttm_grid, log_m_grid, fwd_curve)."""
     with open(DUPIRE_DIR / "data" / "market_params.json") as f:
         mkt = json.load(f)
     S, r, q = mkt["S"], mkt["r"], mkt["q"]
 
-    # Heston parameters
     with open(DATA_DIR / "heston_params.json") as f:
         heston = json.load(f)
 
-    # Dupire local vol surface and grids
     local_vol = np.load(DUPIRE_DIR / "arrays" / "local_vol_surface.npy")
     ttm_grid = np.load(IV_DIR / "arrays" / "ttm_grid.npy")
     log_m_grid = np.load(IV_DIR / "arrays" / "log_m_grid.npy")
 
-    # Build 2D interpolator for Dupire surface (log-moneyness, TTM)
+    # 2D Dupire interpolator (log-moneyness, TTM)
     dupire_interp = interpolate.RegularGridInterpolator(
         (log_m_grid, ttm_grid),
         local_vol,
@@ -96,8 +73,8 @@ def load_inputs():
         fill_value=None,   # clamp to nearest boundary
     )
 
-    # Forward curve F(0, T) from put-call parity — used for correct log-moneyness
-    # coordinate log(S / F(0,t)) rather than the flat approx log(S/S0) - (r-q)*t
+    # Forward curve F(0,T) from put-call parity, for log(S/F(0,t)) rather than
+    # flat approx log(S/S0) - (r-q)t
     fwd_prices = np.load(IV_DIR / "arrays" / "forward_curve.npy")
     if fwd_prices.ndim == 1:
         fwd_curve = np.column_stack([ttm_grid, fwd_prices])
@@ -123,28 +100,18 @@ def load_inputs():
     }
 
 
-# =============================================================================
-# Core particle simulation
-# =============================================================================
+# --- Core particle simulation ---
 
 def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
                          bandwidth_override=BANDWIDTH_OVERRIDE,
                          seed=SEED, variance_scheme=VARIANCE_SCHEME):
     """
-    Run the particle method to compute the leverage function L(t, S).
+    Simulate N particles under LSV with per-step Gyöngy projection
+    L(t_k,S)^2 = sigma_Dupire(t_k,S)^2 / E[V_tk|S_tk=S] (kernel-smoothed).
 
-    Simulates N particles under the LSV dynamics with leverage set at each step
-    by the Gyöngy projection condition
-
-        L(t_k, S)^2 = sigma_Dupire(t_k, S)^2 / E[V_tk | S_tk = S],
-
-    where the conditional expectation is estimated by Gaussian kernel smoothing.
-
-    Inputs: inputs (from load_inputs()); N (particles); dt (years);
-    bandwidth_override (if set, replaces NW CV selection every step); seed;
-    variance_scheme ("euler" or "qe").
-    Returns a dict with leverage_surface (n_S, n_T), spot_grid (n_S,),
-    time_grid (n_T,), and a log of summary diagnostics.
+    dt in years. bandwidth_override: if set, replaces NW CV every step.
+    variance_scheme: "euler" or "qe". Returns dict with leverage_surface (n_S,n_T),
+    spot_grid (n_S,), time_grid (n_T,), and a diagnostics log.
     """
     S0 = inputs["S"]
     r = inputs["r"]
@@ -163,7 +130,7 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
 
     rng = np.random.default_rng(seed)
 
-    # Time grid: from 0 to T_max (max TTM on the Dupire surface)
+    # Time grid 0..T_max (max TTM on Dupire surface)
     T_max = ttm_grid[-1]
     n_steps = int(np.ceil(T_max / dt))
     dt_actual = T_max / n_steps
@@ -179,10 +146,9 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
     spot_grid = np.linspace(S0 * SPOT_GRID_RANGE[0], S0 * SPOT_GRID_RANGE[1],
                              N_SPOT_GRID)
 
-    # Record L(t, S) on the spot grid at a subset of steps (~100-200 slices).
+    # Record L(t,S) on spot grid at ~100-200 steps. Start at TTM>=0.10: earlier
+    # the cloud is too concentrated near S0 for reliable kernel estimates.
     record_every = max(1, n_steps // 200)
-    # Start recording from TTM >= 0.05: before that the particle cloud is too
-    # concentrated near S0 for reliable kernel estimates anywhere on the grid.
     min_record_step = int(np.ceil(0.10 / dt_actual))
     first_record = max(record_every, min_record_step)
     record_steps = list(range(first_record, n_steps + 1, record_every))
@@ -190,13 +156,11 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
         record_steps.append(n_steps)
     record_times = [time_schedule[k] for k in record_steps]
 
-    leverage_records = []   # list of (time, L_values_on_spot_grid)
+    leverage_records = []
 
-    # Initialise particles
     S_particles = np.full(N, S0, dtype=np.float64)
     V_particles = np.full(N, V0, dtype=np.float64)
 
-    # Diagnostics
     clip_count = 0
     total_evaluations = 0
     bandwidth_history = []
@@ -206,57 +170,51 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
     for step in range(n_steps):
         t = time_schedule[step]
 
-        # --- Bandwidth (NW leave-one-out CV) ---
+        # Bandwidth (NW leave-one-out CV)
         if bandwidth_override is not None:
             h = bandwidth_override
         else:
             h = nw_cv_bandwidth(S_particles, V_particles)
         bandwidth_history.append(h)
 
-        # --- Conditional expectation E[V | S] for each particle ---
+        # E[V|S] per particle
         E_V_given_S_particles = conditional_expectation_kernel(
             S_particles, V_particles, S_particles, h
         )
+        E_V_given_S_particles = np.maximum(E_V_given_S_particles, 1e-8)  # floor
 
-        # Floor conditional expectation to avoid division by near-zero
-        E_V_given_S_particles = np.maximum(E_V_given_S_particles, 1e-8)
-
-        # --- Dupire local vol at each particle position ---
+        # Dupire local vol per particle
         sigma_dupire = query_dupire(
             dupire_interp, S_particles, t, S0, r, q, log_m_grid, ttm_grid, fwd_curve
         )
 
-        # --- Leverage function for each particle ---
+        # Leverage per particle
         L_sq = sigma_dupire**2 / E_V_given_S_particles
 
-        # Clip L^2
         n_clipped = np.sum((L_sq < L_SQUARED_CLIP[0]) | (L_sq > L_SQUARED_CLIP[1]))
         clip_count += n_clipped
         total_evaluations += N
         L_sq = np.clip(L_sq, L_SQUARED_CLIP[0], L_SQUARED_CLIP[1])
         L_particles = np.sqrt(L_sq)
 
-        # --- Record leverage surface on the spot grid ---
+        # Record leverage on spot grid
         if step in record_steps:
-            # Evaluate E[V | S] on the spot grid
             E_V_grid = conditional_expectation_kernel(
                 S_particles, V_particles, spot_grid, h
             )
             E_V_grid = np.maximum(E_V_grid, 1e-8)
 
-            # Dupire vol on the spot grid
             sigma_dupire_grid = query_dupire(
                 dupire_interp, spot_grid, t, S0, r, q, log_m_grid, ttm_grid, fwd_curve
             )
 
-            # Leverage on the spot grid
             L_sq_grid = sigma_dupire_grid**2 / E_V_grid
             L_sq_grid = np.clip(L_sq_grid, L_SQUARED_CLIP[0], L_SQUARED_CLIP[1])
             L_grid = np.sqrt(L_sq_grid)
             leverage_records.append(L_grid)
 
         if variance_scheme == "euler":
-            # --- Full-truncation Euler with correlated (W^S, W^V) ---
+            # Full-truncation Euler, correlated (W^S, W^V)
             Z1 = rng.standard_normal(N)
             Z_indep = rng.standard_normal(N)
             Z2 = rho * Z1 + np.sqrt(1.0 - rho**2) * Z_indep
@@ -277,9 +235,9 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
             )
             V_particles = np.maximum(V_particles, 0.0)
         else:
-            # --- Andersen QE for V, BK-decomposed log-spot update ---
-            Z_qe = rng.standard_normal(N)        # for V step (Case A) and U=Phi(Z) (Case B)
-            Z_perp = rng.standard_normal(N)      # independent leg of spot
+            # Andersen QE for V, BK-decomposed log-spot
+            Z_qe = rng.standard_normal(N)        # V step (Case A) and U=Phi(Z) (Case B)
+            Z_perp = rng.standard_normal(N)      # independent spot leg
 
             V_new = step_variance_qe(V_particles, dt_actual,
                                      kappa, theta, xi, Z_qe)
@@ -291,7 +249,6 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
             S_particles = np.exp(log_S)
             V_particles = V_new
 
-        # Progress logging
         if (step + 1) % max(1, n_steps // 10) == 0:
             pct = 100 * (step + 1) / n_steps
             logger.info(
@@ -301,14 +258,11 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
                 f"h={h:.1f}"
             )
 
-    # --- Assemble leverage surface ---
+    # Assemble surface, transpose to (n_S, n_T) matching (spot_grid, time_grid)
     leverage_surface = np.array(leverage_records)   # (n_T_recorded, n_S)
     leverage_time_grid = np.array(record_times[:len(leverage_records)])
+    leverage_surface = leverage_surface.T
 
-    # Transpose to (n_S, n_T) to match (spot_grid, time_grid) convention
-    leverage_surface = leverage_surface.T   # (n_S, n_T)
-
-    # Diagnostics
     clip_pct = 100.0 * clip_count / max(total_evaluations, 1)
     h_mean = np.mean(bandwidth_history)
     h_std = np.std(bandwidth_history)
@@ -359,19 +313,12 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
     }
 
 
-# =============================================================================
-# Plotting
-# =============================================================================
+# --- Plotting ---
 
 def plot_leverage_surface(leverage_surface, spot_grid, time_grid, S0):
-    """
-    3D surface plot of the leverage function L(t, S).
-
-    Inputs: leverage_surface (n_S, n_T); spot_grid; time_grid; S0 (for the
-    moneyness axis).
-    """
+    """3D surface (and time-slice) plot of L(t, S). leverage_surface: (n_S, n_T)."""
     T_mesh, S_mesh = np.meshgrid(time_grid, spot_grid)
-    log_moneyness = np.log(S_mesh / S0)   # ln(S/S₀) — leverage is a function of spot, not forward moneyness
+    log_moneyness = np.log(S_mesh / S0)   # ln(S/S₀): L is a fn of spot, not forward moneyness
 
     fig = plt.figure(figsize=(14, 8))
     ax = fig.add_subplot(111, projection="3d")
@@ -397,7 +344,7 @@ def plot_leverage_surface(leverage_surface, spot_grid, time_grid, S0):
     plt.close()
     logger.info(f"Saved leverage surface plot → {out_path}")
 
-    # Also plot a few time slices
+    # Time slices
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
     n_slices = min(8, len(time_grid))
     slice_indices = np.linspace(0, len(time_grid) - 1, n_slices, dtype=int)
@@ -422,44 +369,31 @@ def plot_leverage_surface(leverage_surface, spot_grid, time_grid, S0):
     logger.info(f"Saved leverage slices plot → {out_path}")
 
 
-# =============================================================================
-# Entry point
-# =============================================================================
+# --- Entry point ---
 
 def run(N=N_PARTICLES, dt=DT, bandwidth_override=BANDWIDTH_OVERRIDE, seed=SEED,
         variance_scheme=VARIANCE_SCHEME):
-    """
-    Run the particle method pipeline.
-
-    Inputs: N (particles); dt (time step); bandwidth_override (NW CV override);
-    seed; variance_scheme. Returns the particle results including the leverage
-    surface.
-    """
+    """Run the particle pipeline (load, simulate, save, plot); returns results."""
     logger.info("=" * 60)
     logger.info("STEP 3b: Particle Method for Leverage Function L(t, S)")
     logger.info("=" * 60)
 
-    # Load inputs
     inputs = load_inputs()
 
-    # Run particle method
     results = run_particle_method(inputs, N=N, dt=dt,
                                    bandwidth_override=bandwidth_override,
                                    seed=seed, variance_scheme=variance_scheme)
 
-    # Save arrays
     np.save(ARRAY_DIR / "leverage_surface.npy", results["leverage_surface"])
     np.save(ARRAY_DIR / "leverage_spot_grid.npy", results["spot_grid"])
     np.save(ARRAY_DIR / "leverage_time_grid.npy", results["time_grid"])
     logger.info(f"Saved leverage arrays → {ARRAY_DIR}/")
 
-    # Save log
     log_path = DATA_DIR / "particle_log.json"
     with open(log_path, "w") as f:
         json.dump(results["log"], f, indent=2)
     logger.info(f"Saved particle log → {log_path}")
 
-    # Plot
     plot_leverage_surface(
         results["leverage_surface"],
         results["spot_grid"],

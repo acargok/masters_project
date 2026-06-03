@@ -87,8 +87,8 @@ def compute_gatheral_g(
     logger.info(f"Gatheral g  range: [{g.min():.4e}, {g.max():.4e}]  "
                 f"(g < 0 fraction: {g_neg_frac*100:.1f}%)")
     if g_neg_frac > 0.01:
-        logger.warning("  *** Butterfly arb (g < 0 in >1% of grid): local vol "
-                       "unreliable there ***")
+        logger.warning("  *** Butterfly arbitrage present (g < 0 in >1% of grid) — "
+                       "local vol will be unreliable in those regions ***")
 
     return g
 

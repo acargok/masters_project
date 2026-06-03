@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-results_4_4_figures.py — thesis §4.4 (Cliquet Pricing) figure pack
-====================================================================
-Stand-alone script. Reads cached pipeline artefacts from
-    pricing/data/pricing_results.json                  (baseline)
-    pricing/arrays/*                                   (sample paths, payoffs)
-    pricing/experiments/decomposition/pricing_results.json  (ρ = 0 run)
-and writes thesis-ready matplotlib figures + LaTeX tables to
-    iv_surface/results_4.4_plots/
+Thesis §4.4 (Cliquet Pricing) figure pack. Stand-alone: reads
+pricing/data/pricing_results.json (baseline), pricing/arrays/* (paths,
+payoffs), and pricing/experiments/decomposition/pricing_results.json (ρ=0)
+and writes figures + LaTeX tables to iv_surface/results_4.4_plots/.
 
-Style conventions: serif font / cm mathtext, square boxes on per-cliquet
-panels, distinct colour per pricing model held constant across the section.
-
-§4.4.1  Cliquet prices across five models (table + grouped bars)
-§4.4.2  Payoff CDFs (one panel per cliquet) + paths/variance two-panel
-§4.4.3  Forward-skew decomposition (table + grouped bars)
+§4.4.1 cliquet prices across five models (table + bars); §4.4.2 payoff CDFs
++ paths/variance panel; §4.4.3 forward-skew decomposition (table + bars).
 """
 import json
 import warnings
@@ -27,14 +19,14 @@ import numpy as np
 
 warnings.filterwarnings("ignore")
 
-# ───────────────────────── Paths ─────────────────────────
+# Paths
 HERE         = Path(__file__).resolve().parent
 ROOT         = HERE.parent
 PRICING_DIR  = ROOT / "pricing"
 OUT_DIR      = HERE / "results_4.4_plots"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ───────────────────────── Style ─────────────────────────
+# Style
 mpl.rcParams.update({
     "font.family":      "serif",
     "font.size":         10,
@@ -57,10 +49,8 @@ _CLIQ_LABEL = {
     "napoleon":        "Napoleon",
 }
 
-# Model colours — fixed across every §4.4 figure so a reader can trace the
-# same model across the price bars, payoff CDFs, and path overlays. The two
-# orange shades pair Pure Heston with its LSV variant; the two purple shades
-# pair Pure Bergomi with its LSV variant (matplotlib's tab20 light/dark pairs).
+# Model colours — fixed across every §4.4 figure. Orange shades pair Pure
+# Heston with its LSV variant; purple shades pair Pure Bergomi (tab20 pairs).
 _MODEL_COLOR = {
     "bs":            "#7f7f7f",   # neutral grey
     "pure_heston":   "#ffbb78",   # light orange  (tab20 pair of tab:orange)
@@ -85,7 +75,7 @@ def _save(fig, name: str) -> Path:
     return out
 
 
-# ═════════════════════ Data loading ═══════════════════════
+# Data loading
 def load_data() -> dict:
     d = {}
     with open(PRICING_DIR / "data" / "pricing_results.json") as f:
@@ -113,16 +103,12 @@ def load_data() -> dict:
     return d
 
 
-# Helper: extract per-model price + MC stats per cliquet from the baseline JSON.
+# Per-model price + MC stats per cliquet from the baseline JSON.
 def _five_model_prices(res: dict, c: str) -> dict:
-    """Returns a dict keyed by model id with {price, se, ci_half}.
-
-    Pure Heston / Bergomi prices live as side-channels inside each LSV block
-    of the same JSON — the pricing engine computes all five model prices in
-    one pass. The BS-flat reference uses the LSV block's own implied ATM vol,
-    so the two BS columns disagree by a few bp; for the headline table we
-    report the Heston-block BS value and flag the Bergomi-block value in the
-    caption."""
+    """Dict keyed by model id with {price, se, ci_half}. Pure Heston/Bergomi
+    prices sit as side-channels in each LSV block (all five computed in one
+    pass). The two BS columns differ by a few bp (each uses its block's ATM
+    vol); the table reports the Heston-block BS value."""
     h = res["heston_options"][c]
     b = res["bergomi_options"][c]
     return {
@@ -144,7 +130,7 @@ def _five_model_prices(res: dict, c: str) -> dict:
     }
 
 
-# ══════════════════ §4.4.1 — Price comparison ═════════════
+# §4.4.1 — Price comparison
 def fig_cliquet_prices_table(d: dict) -> Path:
     """LaTeX table: 3 cliquets × 5 models with prices and 95% MC half-widths
     in percent of the spot price."""
@@ -201,7 +187,7 @@ def fig_cliquet_price_comparison_bars(d: dict) -> Path:
     return _save(fig, "cliquet_price_comparison_bars.png")
 
 
-# ══════════════════ §4.4.2 — Payoff CDFs ══════════════════
+# §4.4.2 — Payoff CDFs
 def fig_cliquet_payoff_cdfs(d: dict) -> Path:
     """One subplot per cliquet, payoff CDFs for the two LSV models overlaid."""
     fig, axes = plt.subplots(1, 3, figsize=(13.0, 4.2))
@@ -211,7 +197,7 @@ def fig_cliquet_payoff_cdfs(d: dict) -> Path:
             p_sorted = np.sort(p)
             n = p_sorted.size
             F = np.arange(1, n + 1) / n
-            # Subsample to keep PDF size reasonable.
+            # Subsample to keep file size reasonable
             step = max(1, n // 4000)
             ax.plot(p_sorted[::step], F[::step],
                     color=_MODEL_COLOR[tag], lw=1.6,
@@ -227,15 +213,9 @@ def fig_cliquet_payoff_cdfs(d: dict) -> Path:
 
 
 def fig_cliquet_paths_panel(d: dict) -> Path:
-    """Two-panel figure stacking sample S-paths and variance trajectories.
-
-    Top panel: a few hundred sample spot paths from each LSV model, lightly
-    overlaid in the model colour. Reset dates marked with thin vertical lines
-    so the cliquet's monthly grid is visible.
-
-    Bottom panel: variance trajectories V(t) under each LSV model. Mean ± 1σ
-    band drawn solid, with a handful of individual paths thinly overlaid so
-    the reader sees both the typical level and the tail behaviour."""
+    """Two stacked panels: sample spot paths per LSV model (reset dates as
+    vertical lines) over variance trajectories V(t) (mean line + thin
+    individual paths)."""
     paths = d["paths"]
     t      = paths["t"]
     t_b    = paths["t_b"]
@@ -251,7 +231,7 @@ def fig_cliquet_paths_panel(d: dict) -> Path:
 
     fig, axes = plt.subplots(2, 1, figsize=(11.0, 7.5), sharex=True)
 
-    # ── Top: spot paths (10 per model, absolute price units) ──────────
+    # Top: spot paths (10 per model)
     ax = axes[0]
     for ti in resets:
         ax.axvline(float(ti), color="grey", lw=0.3, alpha=0.4, zorder=1)
@@ -260,8 +240,7 @@ def fig_cliquet_paths_panel(d: dict) -> Path:
                 lw=0.9, alpha=0.40, zorder=2)
         ax.plot(t_b, S_b[i], color=_MODEL_COLOR["bergomi_lsv"],
                 lw=0.9, alpha=0.40, zorder=2)
-    # Mean line drawn opaquely over the full 200-path ensemble — carries
-    # the legend label so the legend stays uncluttered.
+    # Mean line carries the legend label (keeps the legend uncluttered)
     ax.plot(t,   np.mean(S_h, axis=0), color=_MODEL_COLOR["heston_lsv"],
             lw=1.8, zorder=4, label=_MODEL_LABEL["heston_lsv"])
     ax.plot(t_b, np.mean(S_b, axis=0), color=_MODEL_COLOR["bergomi_lsv"],
@@ -271,7 +250,7 @@ def fig_cliquet_paths_panel(d: dict) -> Path:
     ax.grid(True, alpha=0.3)
     ax.legend(loc="upper left", fontsize=9)
 
-    # ── Bottom: variance trajectories (10 per model, no band) ─────────
+    # Bottom: variance trajectories (10 per model)
     ax = axes[1]
     for i in range(n_show):
         ax.plot(t,   V_h[i], color=_MODEL_COLOR["heston_lsv"],
@@ -291,19 +270,12 @@ def fig_cliquet_paths_panel(d: dict) -> Path:
     return _save(fig, "cliquet_paths_panel.png")
 
 
-# ══════════════════ §4.4.3 — Decomposition ════════════════
+# §4.4.3 — Decomposition
 def _decomp_rows(d: dict):
-    """Compute per-cliquet decomposition rows.
-
-    Returns a list of (cliquet, H_baseline, H_zero, B_baseline, B_zero,
-    H_contrib_pct, B_contrib_pct, HB_diff_baseline, HB_diff_zero,
-    HB_contrib_pct).
-
-    - Per-model contribution is (price_baseline - price_zero_corr) / price_baseline
-      — the fraction of each model's price that the spot-variance correlation
-      accounts for (with sign).
-    - The H-B contribution mirrors the existing Wang-decomposition report:
-      (HB_diff_baseline − HB_diff_zero) / HB_diff_baseline."""
+    """Per-cliquet decomposition rows. Per-model contribution
+    (baseline−zero_corr)/baseline = signed fraction of price from the
+    spot-variance correlation; H-B contribution
+    (HB_baseline−HB_zero)/HB_baseline (Wang decomposition)."""
     rows = []
     for c in _CLIQUETS:
         h0 = d["baseline"]["heston_options"][c]["price"]
@@ -384,7 +356,7 @@ def fig_decomposition_bars(d: dict) -> Path:
            edgecolor="white", linewidth=0.4)
     ax.axhline(0, color="black", lw=0.6)
 
-    # Numeric labels on each bar.
+    # Numeric labels on each bar
     for xi, vh, vb in zip(x, h_contribs, b_contribs):
         ax.text(xi - bar_w / 2, vh + (1.5 if vh >= 0 else -3.5),
                 f"{vh:+.1f}%", ha="center", fontsize=8)
@@ -400,13 +372,13 @@ def fig_decomposition_bars(d: dict) -> Path:
     return _save(fig, "decomposition_bars.png")
 
 
-# ══════════════════════════ Main ══════════════════════════
+# Main
 def main():
     print(f"Output dir: {OUT_DIR.resolve()}")
     print("Loading pricing artefacts ...")
     d = load_data()
 
-    # Quick digest.
+    # Quick digest
     print("Baseline prices (heston_lsv / bergomi_lsv):")
     for c in _CLIQUETS:
         h = d["baseline"]["heston_options"][c]["price"]

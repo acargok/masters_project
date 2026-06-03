@@ -1,44 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Particle Method for Leverage Function sigma(t, S) — Bergomi Two-Factor
-========================================================================
-Part of an LSV (Local Stochastic Volatility) model for pricing Asian options.
-Master's Thesis, Imperial College London.
+"""Particle method for the Bergomi two-factor leverage function sigma(t,S)
+(Master's thesis, Imperial). Calibrates sigma(t,S) in
+    dS/S = (r-q)dt + sigma(S,t) sqrt(xi^t_t) dW^S,
+with xi^t_t the Bergomi two-factor spot variance, via the Gyöngy projection
+    sigma^2(K,t) E[xi^t_t | S_t=K] = sigma_Dupire^2(K,t).
+In: data/{bergomi_params,fwd_var_fit}.json, arrays/fwd_var_curve.npy,
+dupire_vol/ local vol + market params, iv_surface/ grids.
+Out: arrays/leverage_{surface,spot_grid,time_grid}.npy, data/particle_log.json."""
 
-Implements the particle method to calibrate the leverage function sigma(t, S)
-in the Bergomi LSV dynamics:
-
-    dS/S = (r-q) dt + sigma(S,t) sqrt(xi^t_t) dW^S
-
-where xi^t_t is the spot variance from the Bergomi two-factor model:
-
-    xi^T_t = xi^T_0 * f_T(t, x^T_t)
-    x^T_t = alpha_theta [ (1-theta) e^{-kappa1(T-t)} X^1_t
-                           + theta e^{-kappa2(T-t)} X^2_t ]
-    f_T(t, x) = exp( omega * x - omega^2/2 * chi(t, T) )
-
-The leverage function is determined by the Gyongy projection:
-
-    sigma^2(K, t) * E[xi^t_t | S_t = K] = sigma_Dupire^2(K, t)
-
-Inputs:
-    lsv_bergomi/data/bergomi_params.json — model parameters
-    lsv_bergomi/data/fwd_var_fit.json    — VS vol fit (z1, z2, z3)
-    lsv_bergomi/arrays/fwd_var_curve.npy — initial forward variance curve
-    dupire_vol/arrays/local_vol_surface.npy — Dupire local vol
-    dupire_vol/data/market_params.json   — S, r, q
-    iv_surface/arrays/ttm_grid.npy       — time grid
-    iv_surface/arrays/log_m_grid.npy     — log-moneyness grid
-
-Outputs:
-    lsv_bergomi/arrays/leverage_surface.npy     — sigma(t, S) grid
-    lsv_bergomi/arrays/leverage_spot_grid.npy   — spot grid
-    lsv_bergomi/arrays/leverage_time_grid.npy   — time grid
-    lsv_bergomi/data/particle_log.json          — diagnostics
-"""
-
-# ===== IMPORTS =====
 import json
 import logging
 import warnings
@@ -59,7 +29,7 @@ from leverage_estimation import *
 
 warnings.filterwarnings("ignore")
 
-# ===== LOGGING =====
+# Logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -68,9 +38,7 @@ logging.basicConfig(
 logger = logging.getLogger("particle_method_bergomi")
 
 
-# =============================================================================
 # Data loading
-# =============================================================================
 
 def load_inputs():
     with open(DUPIRE_DIR / "data" / "market_params.json") as f:
@@ -99,7 +67,6 @@ def load_inputs():
     else:
         fwd_curve = fwd_prices
 
-    # Interpolator for initial forward variance curve
     fwd_var_interp = interpolate.interp1d(
         ttm_grid, fwd_var, kind="linear",
         bounds_error=False, fill_value=(fwd_var[0], fwd_var[-1]),
@@ -126,9 +93,7 @@ def load_inputs():
     }
 
 
-# =============================================================================
-# Core particle simulation — Bergomi backbone
-# =============================================================================
+# Core particle simulation (Bergomi backbone)
 
 def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
                         bandwidth_override=BANDWIDTH_OVERRIDE, seed=SEED):
@@ -152,19 +117,14 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
 
     rng = np.random.default_rng(seed)
 
-    # Precompute correlation structure for (W^S, W^1, W^2)
-    # Correlation matrix:
-    #   [[1,    rho1,  rho2 ],
-    #    [rho1, 1,     rho12],
-    #    [rho2, rho12, 1    ]]
+    # Correlation matrix for (W^S, W^1, W^2).
     corr_input = np.array([
         [1.0,   rho1,  rho2],
         [rho1,  1.0,   rho12],
         [rho2,  rho12, 1.0],
     ])
-    # Diagnostic: log determinant + minimum eigenvalue of the *input* matrix.
-    # det >> 0 means well-conditioned PD; det near 0 means near-singular;
-    # det < 0 means the input correlations form an invalid matrix.
+    # Diagnostic det/eigvals of the input: det>>0 well-conditioned PD, ~0
+    # near-singular, <0 invalid correlations.
     det_input = float(np.linalg.det(corr_input))
     eigvals_input, eigvecs = np.linalg.eigh(corr_input)
     logger.info(f"Corr matrix (input): det={det_input:+.6e}  "
@@ -173,21 +133,17 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
     logger.info(f"Corr matrix (input): rho1={corr_input[0,1]:+.6f}  "
                 f"rho2={corr_input[0,2]:+.6f}  rho12={corr_input[1,2]:+.6f}")
 
-    # Always regularise via eigenvalue floor at 1e-6 — keeps particle method
-    # and lsv_validation.py using the SAME correlation matrix regardless of
-    # floating-point details when the input is near-singular (e.g. chi
-    # saturated at +/-1, which puts one eigenvalue at 0 in exact arithmetic).
-    # Without this, the two stages can take different branches on the same
-    # input and the leverage no longer projects to the same dynamics it is
-    # later applied to.
+    # Eigenvalue floor at 1e-6 so this stage and lsv_validation.py use the
+    # SAME matrix when the input is near-singular (e.g. chi saturated at +/-1,
+    # one eigenvalue ~0); otherwise the leverage would project to different
+    # dynamics than it is applied to.
     eigvals = np.maximum(eigvals_input, 1e-6)
     corr = eigvecs @ np.diag(eigvals) @ eigvecs.T
     np.fill_diagonal(corr, 1.0)
     regularised = bool(np.any(eigvals != eigvals_input))
     L_chol = np.linalg.cholesky(corr)
 
-    # Diagnostic: post-regularisation correlation values + det.
-    # If the input was already PD this just confirms nothing changed.
+    # Post-regularisation diagnostic; if input was PD, nothing changed.
     det_post = float(np.linalg.det(corr))
     eigvals_post = np.linalg.eigvalsh(corr)
     tag = "regularised" if regularised else "unchanged"
@@ -203,7 +159,7 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
         logger.info(f"Corr matrix delta: drho1={delta_rho1:+.4e}  "
                     f"drho2={delta_rho2:+.4e}  drho12={delta_rho12:+.4e}")
 
-    # Time grid
+    # Time grid.
     T_max = ttm_grid[-1]
     n_steps = int(np.ceil(T_max / dt))
     dt_actual = T_max / n_steps
@@ -213,7 +169,7 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
     logger.info(f"Particle method (Bergomi): N={N:,}, dt={dt_actual:.6f} ({n_steps} steps), "
                 f"T_max={T_max:.4f}")
 
-    # Spot grid for recording leverage surface
+    # Spot grid for recording the leverage surface.
     spot_grid = np.linspace(S0 * SPOT_GRID_RANGE[0], S0 * SPOT_GRID_RANGE[1], N_SPOT_GRID)
 
     record_every = max(1, n_steps // 200)
@@ -226,18 +182,17 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
 
     leverage_records = []
 
-    # Initialise particles
     S_particles = np.full(N, S0, dtype=np.float64)
     X1 = np.zeros(N, dtype=np.float64)
     X2 = np.zeros(N, dtype=np.float64)
 
-    # OU exact simulation coefficients
+    # OU exact-simulation coefficients.
     decay1 = np.exp(-kappa1 * dt_actual)
     decay2 = np.exp(-kappa2 * dt_actual)
     std1 = np.sqrt((1.0 - np.exp(-2.0 * kappa1 * dt_actual)) / (2.0 * kappa1)) if kappa1 > 1e-10 else sqrt_dt
     std2 = np.sqrt((1.0 - np.exp(-2.0 * kappa2 * dt_actual)) / (2.0 * kappa2)) if kappa2 > 1e-10 else sqrt_dt
 
-    # Diagnostics
+    # Diagnostics.
     clip_count = 0
     total_evaluations = 0
     bandwidth_history = []
@@ -248,30 +203,28 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
     for step in range(n_steps):
         t = time_schedule[step]
 
-        # Compute spot variance xi^t_t for each particle
+        # Spot variance xi^t_t per particle.
         xi_t_t = compute_spot_variance(
             X1, X2, t, bergomi, fwd_var_interp, ttm_grid
         )
 
-        # Bandwidth selection
         if bandwidth_override is not None:
             h = bandwidth_override
         else:
             h = nw_cv_bandwidth(S_particles, xi_t_t)
         bandwidth_history.append(h)
 
-        # Conditional expectation E[xi^t_t | S_t = S]
+        # E[xi^t_t | S_t = S].
         E_xi_given_S = conditional_expectation_kernel(
             S_particles, xi_t_t, S_particles, h
         )
         E_xi_given_S = np.maximum(E_xi_given_S, 1e-8)
 
-        # Dupire local vol at each particle
         sigma_dupire = query_dupire(
             dupire_interp, S_particles, t, S0, r, q, log_m_grid, ttm_grid, fwd_curve
         )
 
-        # Leverage function: sigma^2(S,t) = sigma_Dupire^2 / E[xi^t_t | S_t = S]
+        # sigma^2(S,t) = sigma_Dupire^2 / E[xi^t_t | S_t=S].
         L_sq = sigma_dupire**2 / E_xi_given_S
         n_clipped = np.sum((L_sq < L_SQUARED_CLIP[0]) | (L_sq > L_SQUARED_CLIP[1]))
         clip_count += n_clipped
@@ -279,7 +232,7 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
         L_sq = np.clip(L_sq, L_SQUARED_CLIP[0], L_SQUARED_CLIP[1])
         L_particles = np.sqrt(L_sq)
 
-        # Record leverage surface on spot grid
+        # Record leverage surface on the spot grid.
         if step in record_steps:
             E_xi_grid = conditional_expectation_kernel(
                 S_particles, xi_t_t, spot_grid, h
@@ -299,24 +252,23 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
                 "xi_median": float(np.median(xi_t_t)),
             })
 
-        # Generate 3 correlated normals: (Z_S, Z_1, Z_2) via Cholesky
+        # Correlated (Z_S, Z_1, Z_2) via Cholesky.
         Z_indep = rng.standard_normal((3, N))
-        Z_corr = L_chol @ Z_indep  # (3, N)
+        Z_corr = L_chol @ Z_indep
         Z_S = Z_corr[0]
         Z_W1 = Z_corr[1]
         Z_W2 = Z_corr[2]
 
-        # Evolve spot (log-Euler)
+        # Spot (log-Euler).
         vol = L_particles * np.sqrt(np.maximum(xi_t_t, 0.0))
         S_particles = S_particles * np.exp(
             (r - q - 0.5 * vol**2) * dt_actual + vol * sqrt_dt * Z_S
         )
 
-        # Evolve OU processes (exact simulation)
+        # OU (exact).
         X1 = X1 * decay1 + std1 * Z_W1
         X2 = X2 * decay2 + std2 * Z_W2
 
-        # Progress
         if (step + 1) % max(1, n_steps // 10) == 0:
             pct = 100 * (step + 1) / n_steps
             logger.info(
@@ -326,7 +278,6 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
                 f"h={h:.1f}"
             )
 
-    # Assemble leverage surface
     leverage_surface = np.array(leverage_records).T  # (n_S, n_T)
     leverage_time_grid = np.array(record_times[:len(leverage_records)])
 
@@ -376,9 +327,7 @@ def run_particle_method(inputs, N=N_PARTICLES, dt=DT,
     }
 
 
-# =============================================================================
 # Plotting
-# =============================================================================
 
 def plot_leverage_surface(leverage_surface, spot_grid, time_grid, S0):
     T_mesh, S_mesh = np.meshgrid(time_grid, spot_grid)
@@ -424,10 +373,6 @@ def plot_leverage_surface(leverage_surface, spot_grid, time_grid, S0):
     plt.close()
     logger.info(f"Saved leverage slices plot -> {out_path}")
 
-
-# =============================================================================
-# Entry point
-# =============================================================================
 
 def run(N=N_PARTICLES, dt=DT, bandwidth_override=BANDWIDTH_OVERRIDE, seed=SEED):
     logger.info("=" * 60)

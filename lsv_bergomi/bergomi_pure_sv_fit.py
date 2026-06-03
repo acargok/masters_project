@@ -1,33 +1,14 @@
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Bergomi Pure-SV Fit Diagnostic — Step 3a''
-============================================
-Part of an LSV (Local Stochastic Volatility) model for pricing Asian options.
-Master's Thesis, Imperial College London.
-
-Bergomi has no semi-analytic vanilla pricer, so we simulate the pure
-stochastic-volatility backbone (σ(S,t) ≡ 1, i.e. no LSV leverage) under the
-calibrated parameters and reprice the option pool via Monte Carlo.
-
-The 4-panel output plot shows how well the pure Bergomi backbone fits market
-IVs before the LSV leverage function is applied. Large residuals here indicate
-how much work is left for the leverage function in the particle method step.
-
-Inputs:
-    lsv_bergomi/data/bergomi_params.json — calibrated parameters
-    lsv_bergomi/arrays/fwd_var_curve.npy — forward variance curve
-    dupire_vol/data/market_params.json   — S, r, q
-    iv_surface/data/spx_iv_data.csv      — option panel
-    iv_surface/arrays/forward_curve.npy  — F(0, T)
-    iv_surface/arrays/ttm_grid.npy
-    iv_surface/arrays/log_m_grid.npy
-
-Outputs:
-    lsv_bergomi/plots/bergomi_fit.png    — 4-panel model vs market IV
-    lsv_bergomi/data/bergomi_fit.json    — summary statistics
-"""
+"""Bergomi pure-SV fit diagnostic, Step 3a'' (Master's thesis, Imperial).
+Bergomi has no semi-analytic vanilla pricer, so we MC-simulate the pure SV
+backbone (sigma(S,t)=1, no leverage) under the calibrated parameters and
+reprice the option pool; residuals show how much work the leverage function
+must still do in the particle step.
+In: data/bergomi_params.json, arrays/fwd_var_curve.npy, dupire_vol/ market
+params, iv_surface/ option panel + grids.
+Out: plots/bergomi_fit.png (4-panel model vs IV), data/bergomi_fit.json."""
 
 import argparse
 import json
@@ -55,9 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger("bergomi_pure_sv_fit")
 
 
-# =============================================================================
-# Plot — model vs market IV
-# =============================================================================
+# Plot: model vs market IV
 
 def plot_bergomi_fit(K_arr, T_arr, iv_ssvi, iv_model, S, r, q, params,
                      out_path, summary):
@@ -123,17 +102,12 @@ def plot_bergomi_fit(K_arr, T_arr, iv_ssvi, iv_model, S, r, q, params,
     logger.info(f"Saved Bergomi fit plot -> {out_path}")
 
 
-# =============================================================================
-# Entry point
-# =============================================================================
-
 def run(n_paths=N_PATHS, steps_per_year=STEPS_PER_YEAR,
         max_options=MAX_OPTIONS, seed=SEED):
     logger.info("=" * 60)
     logger.info("STEP 3a'' (Bergomi): Pure-SV Fit Diagnostic")
     logger.info("=" * 60)
 
-    # Load market parameters
     with open(DUPIRE_DIR / "data" / "market_params.json") as f:
         mkt = json.load(f)
     S, r, q = mkt["S"], mkt["r"], mkt["q"]
@@ -155,7 +129,6 @@ def run(n_paths=N_PATHS, steps_per_year=STEPS_PER_YEAR,
                 f"rho12={bergomi['rho12']:.4f}")
     logger.info(f"Forward variance range: [{fwd_var.min():.6f}, {fwd_var.max():.6f}]")
 
-    # Option pool
     df = select_option_pool(S, r, q, max_options=max_options, seed=seed)
     logger.info(f"Option pool: {len(df)} OTM options "
                 f"({(df['option_type']=='put').sum()} puts, "
@@ -164,13 +137,11 @@ def run(n_paths=N_PATHS, steps_per_year=STEPS_PER_YEAR,
 
     K_arr = df["strike"].values.astype(np.float64)
     T_arr = df["ttm"].values.astype(np.float64)
-    # `iv` in spx_iv_data.csv is the SSVI-fitted IV (raw quote = `iv_yf`).
-    # We treat it as the SSVI reference and use BS(S, K, T, r, q, iv_ssvi)
-    # as the SSVI price benchmark — never the raw market mid.
+    # `iv` is the SSVI-fitted IV (raw quote = `iv_yf`); used as the SSVI
+    # reference, with BS(...,iv_ssvi) as the price benchmark, never the raw mid.
     iv_ssvi = df["iv"].values.astype(np.float64)
     opt_type_arr = df["option_type"].values
 
-    # Simulate
     dt = 1.0 / steps_per_year
     maturities_required = sorted(set(np.round(T_arr, 6)))
     logger.info(f"Pure-Bergomi MC: {n_paths:,} paths, dt={dt:.5f} "
@@ -207,12 +178,12 @@ def run(n_paths=N_PATHS, steps_per_year=STEPS_PER_YEAR,
     summary = {
         "n_total": int(len(K_arr)),
         "n_valid": int(valid.sum()),
-        # IV errors vs SSVI
+        # IV errors vs SSVI.
         "iv_mae": float(np.mean(np.abs(iv_err))),
         "iv_me":  float(np.mean(iv_err)),
         "iv_rmse": float(np.sqrt(np.mean(iv_err ** 2))),
         "iv_max_abs": float(np.max(np.abs(iv_err))),
-        # Price errors vs SSVI BS price (%)
+        # Price errors vs SSVI BS price (%).
         "n_price_valid": int(price_valid.sum()),
         "price_vs_ssvi_mae_pct": float(np.mean(np.abs(price_err_pct))),
         "price_vs_ssvi_me_pct":  float(np.mean(price_err_pct)),

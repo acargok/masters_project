@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-results_4_3_figures.py — thesis §4.3 (LSV Calibration) figure pack
-====================================================================
-Stand-alone script. Reads cached pipeline artefacts from
-    lsv/arrays/, lsv/data/                       (Heston-LSV)
-    lsv_bergomi/arrays/, lsv_bergomi/data/       (Bergomi-LSV)
-    iv_surface/arrays/                           (forward curve / ttm grid)
-    dupire_vol/data/                             (market params)
-and writes thesis-ready matplotlib figures to
-    iv_surface/results_4.3_plots/
+Thesis §4.3 (LSV Calibration) figure pack. Stand-alone: reads cached
+artefacts from lsv_heston/ (Heston-LSV), lsv_bergomi/ (Bergomi-LSV),
+iv_surface/ (grids), dupire_vol/ (market params) and writes figures to
+iv_surface/results_4.3_plots/.
 
-Style conventions: serif font / cm mathtext, repricing trios at (4.5, 4.5)
-with a square box, calls = tab:blue circles s=5, puts = tab:red circles s=5,
-histograms in bp with mediumpurple bars + ME line, "Implied volatility error
-(bp)" as the unit label.
+Style: serif / cm mathtext; repricing trios at (4.5,4.5) square box;
+calls=tab:blue, puts=tab:red circles s=5; bp histograms with ME line.
 """
 import json
 import warnings
@@ -28,7 +21,7 @@ from matplotlib import cm
 
 warnings.filterwarnings("ignore")
 
-# ───────────────────────── Paths ─────────────────────────
+# Paths
 HERE        = Path(__file__).resolve().parent          # iv_surface/
 ROOT        = HERE.parent
 IV_DIR      = HERE
@@ -39,7 +32,7 @@ OUT_DIR     = HERE / "results_4.3_plots"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ───────────────────────── Style ─────────────────────────
+# Style
 mpl.rcParams.update({
     "font.family":      "serif",
     "font.size":         10,
@@ -68,13 +61,9 @@ def _square_axes(ax) -> None:
 
 
 def _save(fig, name: str, tight: bool = True) -> Path:
-    """Save and close. tight=False honours the declared figsize exactly so
-    paired figures with different right-edge content (colourbar vs none)
-    come out at identical pixel dimensions.
-
-    Note: matplotlib's `savefig.bbox = 'tight'` rcParam overrides a
-    `bbox_inches=None` kwarg, so we wrap in an rc_context to force the
-    canvas-sized save when `tight=False`."""
+    """Save and close. tight=False keeps the declared figsize exact so paired
+    figures match pixel dimensions; uses rc_context to override the
+    savefig.bbox='tight' rcParam (which would otherwise ignore bbox_inches)."""
     out = OUT_DIR / name
     if tight:
         fig.savefig(out)
@@ -85,10 +74,10 @@ def _save(fig, name: str, tight: bool = True) -> Path:
     return out
 
 
-# ═════════════════════ Data loading ═══════════════════════
+# Data loading
 def load_data() -> dict:
     d = {}
-    # ── Heston-LSV ────────────────────────────────────────
+    # Heston-LSV
     d["heston_L"]       = np.load(LSV_DIR / "arrays" / "leverage_surface.npy")
     d["heston_S_grid"]  = np.load(LSV_DIR / "arrays" / "leverage_spot_grid.npy")
     d["heston_T_grid"]  = np.load(LSV_DIR / "arrays" / "leverage_time_grid.npy")
@@ -96,7 +85,7 @@ def load_data() -> dict:
     with open(LSV_DIR / "data" / "validation_summary.json") as f:
         d["heston_val"] = json.load(f)
 
-    # ── Bergomi-LSV ───────────────────────────────────────
+    # Bergomi-LSV
     d["bergomi_L"]      = np.load(BERGOMI_DIR / "arrays" / "leverage_surface.npy")
     d["bergomi_S_grid"] = np.load(BERGOMI_DIR / "arrays" / "leverage_spot_grid.npy")
     d["bergomi_T_grid"] = np.load(BERGOMI_DIR / "arrays" / "leverage_time_grid.npy")
@@ -104,50 +93,31 @@ def load_data() -> dict:
     with open(BERGOMI_DIR / "data" / "validation_summary.json") as f:
         d["bergomi_val"] = json.load(f)
 
-    # ── Market params (for the forward F(T) = S exp((r-q)T) on a uniform grid) ─
+    # Market params (forward F(T) = S·exp((r-q)T))
     with open(DUPIRE_DIR / "data" / "market_params.json") as f:
         d["market"] = json.load(f)
     return d
 
 
-# ══════════════════ §4.3 — Leverage surfaces ══════════════
-# Two separate 3D-isometric surfaces, one per model. Axes and mesh ordering
-# match the upstream pipeline plot_leverage_surface routines:
-#   x = ln(S / S0)         (spot log-moneyness)
-#   y = T                  (years)
-#   z = L(t, S)            (leverage)
-#   T_mesh, S_mesh = np.meshgrid(time_grid, spot_grid)
-# so the data is used as-is from the .npy artefacts without any resampling.
-# The colour scale is locked to [0, 5] for both plots — the particle method
-# clamps L at 5 — so the two panels are directly comparable. 3D styling
-# (figsize, view_init, orthographic projection, labelpad, fontsize) follows
-# the §4.1 dupire/IV surface convention.
+# §4.3 — Leverage surfaces.
+# Two 3D surfaces (one per model), axes/mesh as in the upstream
+# plot_leverage_surface routines: x=ln(S/S0), y=T, z=L(t,S), used as-is.
+# Colour locked to [0, 5] (particle method clamps L at 5) for comparability.
 
 _LEV_VMIN, _LEV_VMAX = 0.0, 5.0
-# Spot log-moneyness range applied to BOTH panels: the EXACT Bergomi-LSV
-# calibrated grid extent. The Heston-LSV grid is far wider (≈ ±0.92) and
-# carries boundary-instability spikes outside the calibrated wing; clipping
-# both panels to the Bergomi extent preserves every Bergomi data point,
-# crops Heston to the comparable domain, and removes the spikes from view.
-# Asymmetry on the right is real (Bergomi's particle support is narrower
-# above forward than below) and meaningful — not a plotting artefact.
+# x-range for both panels = the Bergomi-LSV calibrated extent. The Heston grid
+# is wider (≈ ±0.92) with boundary spikes outside the calibrated wing; clipping
+# to the Bergomi extent keeps all Bergomi points and drops those spikes. Right-
+# side asymmetry is real (narrower Bergomi support above forward), not artefact.
 _LEV_XLIM = (-0.357, 0.263)
 
 
 def _plot_leverage_surface_3d(L, spot_grid, time_grid, S0, fname,
                                 show_colorbar: bool):
-    """3D isometric leverage surface in the §4.1 surface-plot style.
-
-    Data orientation matches lsv/particle_method.py:plot_leverage_surface and
-    lsv_bergomi/particle_method.py:plot_leverage_surface — no resampling.
-    Both panels share the same `_LEV_XLIM` x-range and the same `[0, 5]`
-    colour and z scale, so a reader can compare the surfaces directly.
-
-    Only the Bergomi-LSV panel carries a colourbar (by convention — the
-    scale is identical on both), but both panels are saved at the declared
-    figsize with `bbox_inches=None` so their image dimensions match
-    pixel-for-pixel; the Heston panel reserves the same horizontal area
-    that the Bergomi colourbar occupies, just empty."""
+    """3D leverage surface (§4.1 style), no resampling. Both panels share
+    _LEV_XLIM and the [0,5] colour/z scale for direct comparison. Only the
+    Bergomi panel shows a colourbar, but both save at the same figsize so
+    image dimensions match (Heston reserves the colourbar area empty)."""
     T_mesh, S_mesh = np.meshgrid(time_grid, spot_grid)
     log_moneyness = np.log(S_mesh / S0)
 
@@ -187,16 +157,10 @@ def fig_bergomi_leverage_surface(d: dict) -> Path:
         show_colorbar=True)
 
 
-# ══════════════════ §4.3 — Fourth Checkpoint trio ═════════
-# Same styling as the §4.2 Third Checkpoint trio: square box, bp units,
-# call/put circles, mediumpurple histogram with the ME line.
-#
-# Both `lsv/data/lsv_repricing_errors.csv` and `lsv_bergomi/data/lsv_repricing_errors.csv`
-# share the same schema:
-#   strike, ttm, option_type, moneyness, log_moneyness,
-#   ssvi_price, lsv_price, dupire_price,
-#   iv_ssvi, iv_lsv, lsv_iv_error_bps = (iv_lsv − iv_ssvi) * 1e4
-# so the three trio helpers below take a generic dataframe.
+# §4.3 — Checkpoint trio (same styling as §4.2).
+# lsv_heston/ and lsv_bergomi/ lsv_repricing_errors.csv share a schema
+# (strike, ttm, option_type, ..., iv_ssvi, iv_lsv,
+# lsv_iv_error_bps = (iv_lsv − iv_ssvi)·1e4), so the helpers take a generic df.
 
 def _trio_error_hist(df: pd.DataFrame, fname: str) -> Path:
     err = df["lsv_iv_error_bps"].dropna()
@@ -282,16 +246,10 @@ def fig_bergomi_lsv_repricing_error_vs_moneyness(d: dict) -> Path:
                                      "bergomi_lsv_repricing_error_vs_moneyness.png")
 
 
-# ══════════════════ §4.3 — LSV inter-model agreement ══════
-# Two diagonal scatters comparing Heston-LSV against Bergomi-LSV on the
-# IDENTICAL option set (1567 contracts, joined on (strike, ttm, option_type)
-# from the two pipelines' lsv_repricing_errors.csv outputs). Points hugging
-# the y=x diagonal indicate the two LSV backbones agree on vanilla pricing;
-# spread off the diagonal exposes per-backbone bias. Colouring by option type
-# instead of TTM lets us see whether disagreement clusters in calls or puts.
-#
-# Styling follows the §4.2 model-vs-SSVI scatter (figsize, y=x line, point size,
-# edgecolor convention); only the colour mapping differs.
+# §4.3 — LSV inter-model agreement.
+# Two y=x scatters comparing Heston-LSV vs Bergomi-LSV on the same option set
+# (joined on strike, ttm, option_type). Points on the diagonal = agreement;
+# spread = per-backbone bias. Coloured by call/put. Styling as §4.2.
 
 def _lsv_diagonal_join(d: dict) -> pd.DataFrame:
     """Inner-join the two LSV repricing CSVs on (strike, ttm, option_type)."""
@@ -359,13 +317,13 @@ def fig_lsv_price_diagonal(d: dict) -> Path:
     )
 
 
-# ══════════════════════════ Main ══════════════════════════
+# Main
 def main():
     print(f"Output dir: {OUT_DIR.resolve()}")
     print("Loading pipeline artefacts ...")
     d = load_data()
 
-    # Quick metric digest so the user can sanity-check vs the table source.
+    # Metric digest for sanity-checking against the table source
     print(f"  Heston-LSV  : MAE={d['heston_val']['lsv_iv_mae_bps']:.1f} bp  "
           f"RMSE={d['heston_val']['lsv_iv_rmse_bps']:.1f} bp  "
           f"ME={d['heston_val']['lsv_iv_me_bps']:+.1f} bp  "

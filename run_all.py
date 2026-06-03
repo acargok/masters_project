@@ -16,21 +16,13 @@ Runs the entire Master's-thesis pipeline in dependency order:
     9.  pricing/run_pricing.py               — cliquet MC pricing
     10. pricing/pricing_explorer.py          — cliquet diagnostics
 
-Each script is invoked from the project root (cwd = repo root). Python adds the
-script's own folder to sys.path, so sibling-module imports resolve, while the
-root-relative data paths in each script ("iv_surface/arrays", etc.) stay valid.
-Output is streamed live to stdout and tee'd to a per-step log file under
-run_logs/.
+Each script runs from the repo root; Python adds the script's own folder to
+sys.path so sibling imports resolve while root-relative data paths stay valid.
+Output streams to stdout and is tee'd to run_logs/.
 
 Usage:
-    python run_all.py                     # run everything
-    python run_all.py --from 5            # start from step 5
-    python run_all.py --to 4              # stop after step 4
-    python run_all.py --only 5 9          # run only steps 5 and 9
-    python run_all.py --dry-run           # print plan, don't execute
-    python run_all.py --skip-heston       # forward --skip-heston to step 5
-    python run_all.py --extra 5 -- --skip-particles   # pass extra args to step 5
-
+    python run_all.py [--from N] [--to N] [--only N ...] [--dry-run]
+                      [--skip-heston] [--skip-particles] [--extra 'N args']
 Exit code is 0 only if every requested step succeeds.
 """
 
@@ -43,12 +35,11 @@ import sys
 import time
 from pathlib import Path
 
-# ===== PATHS =====
+# Paths
 ROOT = Path(__file__).resolve().parent
 LOG_DIR = ROOT / "run_logs"
 
-# ===== PIPELINE =====
-# (step_id, working_dir, script_filename, label)
+# Pipeline: (step_id, working_dir, script_filename, label)
 STEPS = [
     (1,  "iv_surface",  "iv_surface_ssvi.py",   "SSVI fit"),
     (2,  "iv_surface",  "iv_explorer.py",       "IV explorer"),
@@ -63,7 +54,7 @@ STEPS = [
 ]
 
 
-# ===== LOGGING =====
+# Logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -73,10 +64,7 @@ logger = logging.getLogger("run_all")
 
 
 def parse_extra(extras):
-    """
-    Parse repeated --extra flags. Each extra is `<step_id> <args...>` where
-    args are everything up to the next --extra or end. Returns dict {step_id: [args]}.
-    """
+    """Parse repeated --extra flags `<step_id> <args...>` -> {step_id: [args]}."""
     out = {}
     if not extras:
         return out
@@ -172,7 +160,7 @@ def main():
                         help="Forward --skip-particles to step 5 (run_lsv_heston.py)")
     args = parser.parse_args()
 
-    # Build the list of step ids to execute
+    # Steps to execute
     if args.only:
         wanted = set(args.only)
         plan = [s for s in STEPS if s[0] in wanted]
